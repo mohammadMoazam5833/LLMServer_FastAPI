@@ -12,6 +12,7 @@ from langchain_core.runnables import RunnableLambda
 
 from app.langchain_integration.memory import create_redis_memory
 from app.langchain_integration.model_wrapper import ChatProviderWrapper
+from app.services.openwebui_tasks import filter_openwebui_internal_history
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,11 @@ def create_conversation_chain(
     # ── async-aware history loader ─────────────────────────────────────────────
     async def _load_history(input_data: dict) -> list:
         vars_ = memory.load_memory_variables({"input": input_data["input"]})
-        history = vars_.get("chat_history", [])
+        raw_history = vars_.get("chat_history", [])
+        history = filter_openwebui_internal_history(raw_history)
+        removed = len(raw_history) - len(history)
+        if removed:
+            logger.info("🧹 Filtered %d Open WebUI internal history messages", removed)
         if history:
             last = history[-1]
             preview = last.content[:40] if hasattr(last, "content") else str(last)[:40]

@@ -17,6 +17,7 @@ from app.models.llm import LLMModel, Conversation
 from app.models.user import User
 from app.runtime.provider_manager import ProviderManager
 from app.services.chat_service import ChatService
+from app.services.openwebui_tasks import is_openwebui_internal_request
 from app.schemas.schemas import ChatCompletionRequest
 
 
@@ -36,6 +37,76 @@ def _get_system(messages) -> str:
     return ""
 
 
+def _to_openai_messages(messages) -> list[dict]:
+    return [
+        {
+            "role": m.role if hasattr(m, "role") else m["role"],
+            "content": m.content if hasattr(m, "content") else m["content"],
+        }
+        for m in messages
+    ]
+
+
+async def _load_model(data: ChatCompletionRequest, db: AsyncSession) -> LLMModel:
+    result = await db.execute(
+        select(LLMModel).where(LLMModel.id == data.model, LLMModel.is_active == True)  # noqa: E712
+    )
+    model = result.scalar_one_or_none()
+    if model is None:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Model '{data.model}' not found")
+    return model
+
+
+async def _create_internal_task_completion(
+    data: ChatCompletionRequest,
+    db: AsyncSession,
+) -> dict:
+    model = await _load_model(data, db)
+    generator = ProviderManager.get_provider(model)
+    response = await generator.generate(
+        _to_openai_messages(data.messages),
+        max_tokens=int(data.max_tokens),
+        temperature=float(data.temperature),
+    )
+    content = response.get("text", "")
+    return {
+        "id": f"chatcmpl-{uuid.uuid4()}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model.id,
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": content}}],
+        "conversation_id": str(data.conversation_id) if data.conversation_id else None,
+        "usage": response.get("usage", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}),
+    }
+
+
+async def _create_internal_task_completion_stream(
+    data: ChatCompletionRequest,
+    db: AsyncSession,
+) -> AsyncIterator[str]:
+    model = await _load_model(data, db)
+    generator = ProviderManager.get_provider(model)
+    cmpl_id = f"chatcmpl-{uuid.uuid4()}"
+    created = int(time.time())
+
+    async for token in generator.generate_stream(
+        _to_openai_messages(data.messages),
+        max_tokens=int(data.max_tokens),
+        temperature=float(data.temperature),
+    ):
+        chunk = {
+            "id": cmpl_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model.id,
+            "choices": [{"index": 0, "delta": {"content": token}, "finish_reason": None}],
+        }
+        yield f"data: {json.dumps(chunk)}\n\n"
+
+    yield "data: [DONE]\n\n"
+
+
 async def _prepare(
     data: ChatCompletionRequest,
     user: User,
@@ -46,13 +117,7 @@ async def _prepare(
     Returns (service, conversation, model_id, last_user_message)
     """
     # ── Load model ─────────────────────────────────────────────────────────────
-    result = await db.execute(
-        select(LLMModel).where(LLMModel.id == data.model, LLMModel.is_active == True)  # noqa: E712
-    )
-    model = result.scalar_one_or_none()
-    if model is None:
-        from fastapi import HTTPException, status
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Model '{data.model}' not found")
+    model = await _load_model(data, db)
 
     # ── Resolve conversation ───────────────────────────────────────────────────
     conv_id = data.conversation_id
@@ -113,6 +178,9 @@ async def create_chat_completion(
     user: User,
     db: AsyncSession,
 ) -> dict:
+    if is_openwebui_internal_request(data.messages):
+        return await _create_internal_task_completion(data, db)
+
     service, conv, model_id, msg = await _prepare(data, user, db)
     max_tokens = int(data.max_tokens)
     res = await service.chat(msg, max_tokens)
@@ -134,6 +202,11 @@ async def create_chat_completion_stream(
     user: User,
     db: AsyncSession,
 ) -> AsyncIterator[str]:
+    if is_openwebui_internal_request(data.messages):
+        async for chunk in _create_internal_task_completion_stream(data, db):
+            yield chunk
+        return
+
     service, conv, model_id, msg = await _prepare(data, user, db)
     max_tokens = int(data.max_tokens)
     cmpl_id = f"chatcmpl-{uuid.uuid4()}"
