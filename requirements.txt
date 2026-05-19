@@ -27,3 +27,4 @@ httpx>=0.27.0
 # ── Utils ──────────────────────────────────────────────────────────────────────
 python-dotenv>=1.0.0
 python-multipart>=0.0.9            # Form data support
+pypdf>=4.0.0                       # PDF text extraction for RAG uploads

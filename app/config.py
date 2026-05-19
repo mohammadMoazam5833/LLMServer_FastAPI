@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     # ── Chain Manager TTL ─────────────────────────────────────────────────────
     CHAIN_TTL_SECONDS: int = 1800         # 30 minutes idle eviction
 
+    # ── RAG ───────────────────────────────────────────────────────────────────
+    RAG_UPLOAD_DIR: str = "/tmp/llm_fastapi_uploads"
+    RAG_CHUNK_SIZE: int = 1200
+    RAG_CHUNK_OVERLAP: int = 200
+    RAG_TOP_K: int = 4
+
     @field_validator("DATABASE_URL")
     @classmethod
     def normalize_database_url(cls, value: str) -> str:

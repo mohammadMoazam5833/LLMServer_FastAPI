@@ -27,6 +27,7 @@ class ChatService:
         conversation: Conversation,
         user_id: int,
         db: AsyncSession,
+        system_prompt: str | None = None,
         **kwargs,
     ):
         self.conversation = conversation
@@ -35,7 +36,7 @@ class ChatService:
         self._generator = generator
         self._model_id = model_id
         self._kwargs = kwargs
-        self._system_prompt = conversation.system_prompt or "You are a helpful coding assistant."
+        self._system_prompt = system_prompt or conversation.system_prompt or "You are a helpful coding assistant."
 
     async def _get_chain(self):
         return await ChainManager.get(

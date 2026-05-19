@@ -52,10 +52,17 @@ class ChatMessage(BaseModel):
     content: str
 
 
+class ChatFileReference(BaseModel):
+    id: str
+    type: str | None = None
+    name: str | None = None
+
+
 class ChatCompletionRequest(BaseModel):
     model: str
     messages: list[ChatMessage]
     conversation_id: uuid.UUID | None = None
+    files: list[ChatFileReference] = Field(default_factory=list)
     max_tokens: int = Field(default=256, ge=1, le=4096)
     stream: bool = False
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
@@ -139,3 +146,12 @@ class ConversationDetail(BaseModel):
     id: str
     title: str
     messages: list[MessageOut]
+
+
+class RAGFileResponse(BaseModel):
+    id: uuid.UUID
+    filename: str
+    content_type: str
+    status: str
+    created_at: datetime
+    chunk_count: int = 0

@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, Query, UploadFile
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
 from app.database import get_db
+from app.models.llm import RAGChunk
 from app.models.user import User
 from app.schemas.schemas import (
     ChatCompletionRequest,
@@ -21,6 +23,7 @@ from app.schemas.schemas import (
     APIKeyCreate,
     APIKeyResponse,
     APIKeyCreatedResponse,
+    RAGFileResponse,
 )
 from app.services.chat_completion_service import create_chat_completion
 from app.services.model_service import (
@@ -29,6 +32,7 @@ from app.services.model_service import (
     get_conversation_detail,
     create_api_key,
 )
+from app.services.rag_service import create_rag_file, list_rag_files
 
 router = APIRouter(tags=["Internal"])
 
@@ -73,6 +77,35 @@ async def chat_detail(
     db: AsyncSession = Depends(get_db),
 ):
     return await get_conversation_detail(chat_id, db)
+
+
+# ── RAG Files ─────────────────────────────────────────────────────────────────
+
+@router.post("/files", response_model=RAGFileResponse, status_code=201)
+async def upload_file(
+    file: UploadFile = File(...),
+    process: bool = Query(default=True),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    rag_file = await create_rag_file(db, user.id, file, process=process)
+    chunk_count = await db.scalar(select(func.count(RAGChunk.id)).where(RAGChunk.file_id == rag_file.id))
+    return RAGFileResponse(
+        id=rag_file.id,
+        filename=rag_file.filename,
+        content_type=rag_file.content_type,
+        status=rag_file.status,
+        created_at=rag_file.created_at,
+        chunk_count=chunk_count or 0,
+    )
+
+
+@router.get("/files")
+async def files(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return {"object": "list", "data": await list_rag_files(db, user.id)}
 
 
 # ── API Keys ───────────────────────────────────────────────────────────────────

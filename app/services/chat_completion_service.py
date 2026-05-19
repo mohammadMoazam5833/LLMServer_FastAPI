@@ -6,6 +6,7 @@ prepare() is now async because all DB operations are async.
 from __future__ import annotations
 
 import json
+import logging
 import time
 import uuid
 from typing import AsyncIterator
@@ -18,7 +19,10 @@ from app.models.user import User
 from app.runtime.provider_manager import ProviderManager
 from app.services.chat_service import ChatService
 from app.services.openwebui_tasks import is_openwebui_internal_request
+from app.services.rag_service import retrieve_context
 from app.schemas.schemas import ChatCompletionRequest
+
+logger = logging.getLogger(__name__)
 
 
 def _get_last_user(messages) -> str | None:
@@ -47,6 +51,89 @@ def _to_openai_messages(messages) -> list[dict]:
     ]
 
 
+def _with_rag_context(messages: list[dict], context: str) -> list[dict]:
+    if not context:
+        return messages
+
+    system_message = {
+        "role": "system",
+        "content": (
+            "Use the following retrieved document context when it is relevant. "
+            "If the context does not answer the user, say so and answer from general knowledge.\n\n"
+            f"{context}"
+        ),
+    }
+    if messages and messages[0]["role"] == "system":
+        merged = messages.copy()
+        merged[0] = {
+            "role": "system",
+            "content": f"{messages[0]['content']}\n\n{system_message['content']}",
+        }
+        return merged
+    return [system_message, *messages]
+
+
+def _estimate_tokens(text: str) -> int:
+    # Conservative approximation that works reasonably for mixed Persian/English text.
+    return max(1, len(text or "") // 3)
+
+
+def _message_token_count(message: dict) -> int:
+    return _estimate_tokens(message.get("content", "")) + 4
+
+
+def _trim_messages_to_budget(messages: list[dict], max_prompt_tokens: int) -> list[dict]:
+    if not messages:
+        return messages
+
+    system_messages = [message for message in messages if message["role"] == "system"]
+    chat_messages = [message for message in messages if message["role"] != "system"]
+
+    system_tokens = sum(_message_token_count(message) for message in system_messages)
+    chat_budget = max(256, max_prompt_tokens - system_tokens)
+
+    kept_reversed: list[dict] = []
+    used = 0
+    for message in reversed(chat_messages):
+        message_tokens = _message_token_count(message)
+        if kept_reversed and used + message_tokens > chat_budget:
+            break
+        kept_reversed.append(message)
+        used += message_tokens
+
+    kept_chat = list(reversed(kept_reversed))
+    dropped = len(chat_messages) - len(kept_chat)
+    if dropped:
+        logger.info(
+            "Trimmed %d OpenAI-compatible history messages to fit prompt budget",
+            dropped,
+        )
+
+    return [*system_messages, *kept_chat]
+
+
+def _prepare_provider_messages(
+    data: ChatCompletionRequest,
+    model: LLMModel,
+    rag_context: str,
+) -> list[dict]:
+    messages = _with_rag_context(_to_openai_messages(data.messages), rag_context)
+    max_output_tokens = min(int(data.max_tokens), model.max_output_tokens or int(data.max_tokens))
+    context_length = model.context_length or 8192
+    prompt_budget = max(512, context_length - max_output_tokens - 512)
+    return _trim_messages_to_budget(messages, prompt_budget)
+
+
+def _file_ids(data: ChatCompletionRequest) -> list[uuid.UUID]:
+    ids: list[uuid.UUID] = []
+    for file in data.files:
+        try:
+            ids.append(uuid.UUID(str(file.id)))
+        except ValueError:
+            continue
+    return ids
+
+
 async def _load_model(data: ChatCompletionRequest, db: AsyncSession) -> LLMModel:
     result = await db.execute(
         select(LLMModel).where(LLMModel.id == data.model, LLMModel.is_active == True)  # noqa: E712
@@ -64,9 +151,13 @@ async def _create_internal_task_completion(
 ) -> dict:
     model = await _load_model(data, db)
     generator = ProviderManager.get_provider(model)
-    response = await generator.generate(
+    messages = _trim_messages_to_budget(
         _to_openai_messages(data.messages),
-        max_tokens=int(data.max_tokens),
+        max(512, (model.context_length or 8192) - int(data.max_tokens) - 512),
+    )
+    response = await generator.generate(
+        messages,
+        max_tokens=min(int(data.max_tokens), model.max_output_tokens or int(data.max_tokens)),
         temperature=float(data.temperature),
     )
     content = response.get("text", "")
@@ -91,8 +182,11 @@ async def _create_internal_task_completion_stream(
     created = int(time.time())
 
     async for token in generator.generate_stream(
-        _to_openai_messages(data.messages),
-        max_tokens=int(data.max_tokens),
+        _trim_messages_to_budget(
+            _to_openai_messages(data.messages),
+            max(512, (model.context_length or 8192) - int(data.max_tokens) - 512),
+        ),
+        max_tokens=min(int(data.max_tokens), model.max_output_tokens or int(data.max_tokens)),
         temperature=float(data.temperature),
     ):
         chunk = {
@@ -121,6 +215,16 @@ async def _prepare(
 
     # ── Resolve conversation ───────────────────────────────────────────────────
     conv_id = data.conversation_id
+    system_prompt = _get_system(data.messages) or "You are a helpful coding assistant."
+    rag_context = await retrieve_context(db, user.id, _file_ids(data), _get_last_user(data.messages) or "")
+    if rag_context:
+        system_prompt = (
+            f"{system_prompt}\n\n"
+            "Use the following retrieved document context when it is relevant. "
+            "If the context does not answer the user, say so and answer from general knowledge.\n\n"
+            f"{rag_context}"
+        )
+
     if conv_id:
         result = await db.execute(
             select(Conversation).where(
@@ -135,27 +239,18 @@ async def _prepare(
                 id=conv_id,
                 user_id=user.id,
                 model_id=model.id,
-                system_prompt=_get_system(data.messages) or "You are a helpful coding assistant.",
+                system_prompt=system_prompt,
             )
             db.add(conv)
             await db.flush()
     else:
-        # Find latest conversation for this user+model
-        result = await db.execute(
-            select(Conversation)
-            .where(Conversation.user_id == user.id, Conversation.model_id == model.id)
-            .order_by(Conversation.created_at.desc())
-            .limit(1)
+        conv = Conversation(
+            user_id=user.id,
+            model_id=model.id,
+            system_prompt=system_prompt,
         )
-        conv = result.scalar_one_or_none()
-        if conv is None:
-            conv = Conversation(
-                user_id=user.id,
-                model_id=model.id,
-                system_prompt=_get_system(data.messages) or "You are a helpful coding assistant.",
-            )
-            db.add(conv)
-            await db.flush()
+        db.add(conv)
+        await db.flush()
 
     generator = ProviderManager.get_provider(model)
     service = ChatService(
@@ -164,11 +259,77 @@ async def _prepare(
         conversation=conv,
         user_id=user.id,
         db=db,
+        system_prompt=system_prompt,
         model_path=model.model_path,
         context_length=model.context_length,
         max_output_tokens=model.max_output_tokens,
     )
     return service, conv, model.id, _get_last_user(data.messages)
+
+
+async def create_openai_chat_completion(
+    data: ChatCompletionRequest,
+    user: User,
+    db: AsyncSession,
+) -> dict:
+    if is_openwebui_internal_request(data.messages):
+        return await _create_internal_task_completion(data, db)
+
+    model = await _load_model(data, db)
+    generator = ProviderManager.get_provider(model)
+    rag_context = await retrieve_context(db, user.id, _file_ids(data), _get_last_user(data.messages) or "")
+    messages = _prepare_provider_messages(data, model, rag_context)
+    max_tokens = min(int(data.max_tokens), model.max_output_tokens or int(data.max_tokens))
+    response = await generator.generate(
+        messages,
+        max_tokens=max_tokens,
+        temperature=float(data.temperature),
+    )
+    content = response.get("text", "")
+    return {
+        "id": f"chatcmpl-{uuid.uuid4()}",
+        "object": "chat.completion",
+        "created": int(time.time()),
+        "model": model.id,
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": content}}],
+        "conversation_id": str(data.conversation_id) if data.conversation_id else None,
+        "usage": response.get("usage", {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}),
+    }
+
+
+async def create_openai_chat_completion_stream(
+    data: ChatCompletionRequest,
+    user: User,
+    db: AsyncSession,
+) -> AsyncIterator[str]:
+    if is_openwebui_internal_request(data.messages):
+        async for chunk in _create_internal_task_completion_stream(data, db):
+            yield chunk
+        return
+
+    model = await _load_model(data, db)
+    generator = ProviderManager.get_provider(model)
+    rag_context = await retrieve_context(db, user.id, _file_ids(data), _get_last_user(data.messages) or "")
+    messages = _prepare_provider_messages(data, model, rag_context)
+    max_tokens = min(int(data.max_tokens), model.max_output_tokens or int(data.max_tokens))
+    cmpl_id = f"chatcmpl-{uuid.uuid4()}"
+    created = int(time.time())
+
+    async for token in generator.generate_stream(
+        messages,
+        max_tokens=max_tokens,
+        temperature=float(data.temperature),
+    ):
+        chunk = {
+            "id": cmpl_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model.id,
+            "choices": [{"index": 0, "delta": {"content": token}, "finish_reason": None}],
+        }
+        yield f"data: {json.dumps(chunk)}\n\n"
+
+    yield "data: [DONE]\n\n"
 
 
 # ── Non-streaming ──────────────────────────────────────────────────────────────

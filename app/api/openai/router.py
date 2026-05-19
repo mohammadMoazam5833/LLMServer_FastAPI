@@ -21,8 +21,8 @@ from app.schemas.schemas import (
     ModelListResponse,
 )
 from app.services.chat_completion_service import (
-    create_chat_completion,
-    create_chat_completion_stream,
+    create_openai_chat_completion,
+    create_openai_chat_completion_stream,
 )
 from app.services.model_service import list_models
 from app.config import get_settings
@@ -49,7 +49,7 @@ async def openai_chat_completions(
 ):
     if body.stream:
         return StreamingResponse(
-            create_chat_completion_stream(body, user, db),
+            create_openai_chat_completion_stream(body, user, db),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -57,7 +57,7 @@ async def openai_chat_completions(
             },
         )
 
-    result = await create_chat_completion(body, user, db)
+    result = await create_openai_chat_completion(body, user, db)
     return result
 
 

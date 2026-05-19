@@ -120,3 +120,53 @@ class UploadedFile(Base):
 
     def __repr__(self) -> str:
         return f"<UploadedFile {self.filename}>"
+
+
+class RAGFile(Base):
+    """A user-uploaded file prepared for retrieval."""
+    __tablename__ = "rag_file"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users_user.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(128), default="")
+    path: Mapped[str] = mapped_column(String(512), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="uploaded")
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc)
+    )
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    chunks: Mapped[list["RAGChunk"]] = relationship(
+        "RAGChunk", back_populates="file", cascade="all, delete-orphan",
+        order_by="RAGChunk.chunk_index"
+    )
+
+
+class RAGChunk(Base):
+    """A searchable text chunk extracted from a RAG file."""
+    __tablename__ = "rag_chunk"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    file_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("rag_file.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    token_count: Mapped[int] = mapped_column(Integer, default=0)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc)
+    )
+
+    file: Mapped["RAGFile"] = relationship("RAGFile", back_populates="chunks")
