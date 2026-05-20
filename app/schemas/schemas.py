@@ -49,7 +49,15 @@ class APIKeyCreatedResponse(APIKeyResponse):
 
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant"]
-    content: str
+    content: Any
+    images: list[str] = Field(default_factory=list)
+
+    @field_validator("content", mode="before")
+    @classmethod
+    def normalize_content(cls, v):
+        if v is None:
+            return ""
+        return v
 
 
 class ChatFileReference(BaseModel):
@@ -63,7 +71,7 @@ class ChatCompletionRequest(BaseModel):
     messages: list[ChatMessage]
     conversation_id: uuid.UUID | None = None
     files: list[ChatFileReference] = Field(default_factory=list)
-    max_tokens: int = Field(default=256, ge=1, le=4096)
+    max_tokens: int = Field(default=2048, ge=1, le=32768)
     stream: bool = False
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
 

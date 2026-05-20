@@ -31,6 +31,12 @@ from app.api.openai.router import router as openai_router
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+# Ensure logging is configured when running via uvicorn (not just __main__)
+logging.basicConfig(level=logging.DEBUG if settings.DEBUG else logging.INFO)
+logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 # ── Background cleanup task ────────────────────────────────────────────────────
 _cleanup_task: asyncio.Task | None = None
 

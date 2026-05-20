@@ -25,11 +25,47 @@ from app.schemas.schemas import ChatCompletionRequest
 logger = logging.getLogger(__name__)
 
 
+def _flatten_content(message) -> str:
+    raw = message.content if hasattr(message, "content") else message.get("content", "")
+    images = message.images if hasattr(message, "images") else message.get("images", [])
+
+    if images:
+        from app.services.rag_service import ocr_base64_image
+        texts = []
+        if isinstance(raw, str) and raw:
+            texts.append(raw)
+        for i, img_url in enumerate(images):
+            if img_url.startswith("data:image"):
+                ocr_text = ocr_base64_image(img_url)
+                if ocr_text:
+                    texts.append(f"[OCR: {ocr_text}]")
+        return "\n".join(texts)
+
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, list):
+        from app.services.rag_service import ocr_base64_image
+        texts = []
+        for part in raw:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "text":
+                texts.append(part.get("text", ""))
+            elif part.get("type") == "image_url":
+                url = part.get("image_url", {}).get("url", "")
+                if url.startswith("data:image"):
+                    ocr_text = ocr_base64_image(url)
+                    if ocr_text:
+                        texts.append(f"[OCR: {ocr_text}]")
+        return "\n".join(texts)
+    return str(raw)
+
+
 def _get_last_user(messages) -> str | None:
     for m in reversed(messages):
         role = m.role if hasattr(m, "role") else m["role"]
         if role == "user":
-            return m.content if hasattr(m, "content") else m["content"]
+            return _flatten_content(m)
     return None
 
 
@@ -37,7 +73,7 @@ def _get_system(messages) -> str:
     for m in messages:
         role = m.role if hasattr(m, "role") else m["role"]
         if role == "system":
-            return m.content if hasattr(m, "content") else m["content"]
+            return _flatten_content(m)
     return ""
 
 
@@ -45,7 +81,7 @@ def _to_openai_messages(messages) -> list[dict]:
     return [
         {
             "role": m.role if hasattr(m, "role") else m["role"],
-            "content": m.content if hasattr(m, "content") else m["content"],
+            "content": _flatten_content(m),
         }
         for m in messages
     ]
@@ -112,15 +148,30 @@ def _trim_messages_to_budget(messages: list[dict], max_prompt_tokens: int) -> li
     return [*system_messages, *kept_chat]
 
 
+def _resolve_max_tokens(data_max_tokens: int, model_max_output: int | None) -> int:
+    cap = model_max_output or 4096
+    requested = int(data_max_tokens)
+    resolved = min(requested, cap)
+    logger.info("🔢 max_tokens: request=%d | model_cap=%d | resolved=%d", requested, cap, resolved)
+    return resolved
+
+
 def _prepare_provider_messages(
     data: ChatCompletionRequest,
     model: LLMModel,
     rag_context: str,
 ) -> list[dict]:
     messages = _with_rag_context(_to_openai_messages(data.messages), rag_context)
-    max_output_tokens = min(int(data.max_tokens), model.max_output_tokens or int(data.max_tokens))
+    max_output_tokens = _resolve_max_tokens(data.max_tokens, model.max_output_tokens)
     context_length = model.context_length or 8192
     prompt_budget = max(512, context_length - max_output_tokens - 512)
+
+    rag_len = len(rag_context) if rag_context else 0
+    logger.info(
+        "📝 prepare_provider_messages | model_ctx=%d | max_output=%d | prompt_budget=%d | rag_context_chars=%d | total_msgs=%d",
+        context_length, max_output_tokens, prompt_budget, rag_len, len(messages)
+    )
+
     return _trim_messages_to_budget(messages, prompt_budget)
 
 
@@ -151,13 +202,14 @@ async def _create_internal_task_completion(
 ) -> dict:
     model = await _load_model(data, db)
     generator = ProviderManager.get_provider(model)
+    max_tokens = _resolve_max_tokens(data.max_tokens, model.max_output_tokens)
     messages = _trim_messages_to_budget(
         _to_openai_messages(data.messages),
-        max(512, (model.context_length or 8192) - int(data.max_tokens) - 512),
+        max(512, (model.context_length or 8192) - max_tokens - 512),
     )
     response = await generator.generate(
         messages,
-        max_tokens=min(int(data.max_tokens), model.max_output_tokens or int(data.max_tokens)),
+        max_tokens=max_tokens,
         temperature=float(data.temperature),
     )
     content = response.get("text", "")
@@ -178,15 +230,16 @@ async def _create_internal_task_completion_stream(
 ) -> AsyncIterator[str]:
     model = await _load_model(data, db)
     generator = ProviderManager.get_provider(model)
+    max_tokens = _resolve_max_tokens(data.max_tokens, model.max_output_tokens)
     cmpl_id = f"chatcmpl-{uuid.uuid4()}"
     created = int(time.time())
 
     async for token in generator.generate_stream(
         _trim_messages_to_budget(
             _to_openai_messages(data.messages),
-            max(512, (model.context_length or 8192) - int(data.max_tokens) - 512),
+            max(512, (model.context_length or 8192) - max_tokens - 512),
         ),
-        max_tokens=min(int(data.max_tokens), model.max_output_tokens or int(data.max_tokens)),
+        max_tokens=max_tokens,
         temperature=float(data.temperature),
     ):
         chunk = {
@@ -275,17 +328,24 @@ async def create_openai_chat_completion(
     if is_openwebui_internal_request(data.messages):
         return await _create_internal_task_completion(data, db)
 
+    logger.info(
+        "🎯 create_openai_chat_completion | model_id=%s | request_max_tokens=%d | stream=%s",
+        data.model, data.max_tokens, data.stream
+    )
+
     model = await _load_model(data, db)
     generator = ProviderManager.get_provider(model)
     rag_context = await retrieve_context(db, user.id, _file_ids(data), _get_last_user(data.messages) or "")
     messages = _prepare_provider_messages(data, model, rag_context)
-    max_tokens = min(int(data.max_tokens), model.max_output_tokens or int(data.max_tokens))
+    max_tokens = _resolve_max_tokens(data.max_tokens, model.max_output_tokens)
+
     response = await generator.generate(
         messages,
         max_tokens=max_tokens,
         temperature=float(data.temperature),
     )
     content = response.get("text", "")
+    logger.info("📥 response content length: %d chars", len(content))
     return {
         "id": f"chatcmpl-{uuid.uuid4()}",
         "object": "chat.completion",
@@ -307,11 +367,17 @@ async def create_openai_chat_completion_stream(
             yield chunk
         return
 
+    logger.info(
+        "📡 create_openai_chat_completion_stream | model_id=%s | request_max_tokens=%d",
+        data.model, data.max_tokens
+    )
+
     model = await _load_model(data, db)
     generator = ProviderManager.get_provider(model)
     rag_context = await retrieve_context(db, user.id, _file_ids(data), _get_last_user(data.messages) or "")
     messages = _prepare_provider_messages(data, model, rag_context)
-    max_tokens = min(int(data.max_tokens), model.max_output_tokens or int(data.max_tokens))
+    max_tokens = _resolve_max_tokens(data.max_tokens, model.max_output_tokens)
+
     cmpl_id = f"chatcmpl-{uuid.uuid4()}"
     created = int(time.time())
 
@@ -343,7 +409,8 @@ async def create_chat_completion(
         return await _create_internal_task_completion(data, db)
 
     service, conv, model_id, msg = await _prepare(data, user, db)
-    max_tokens = int(data.max_tokens)
+    max_output_cap = service._kwargs.get("max_output_tokens") or 4096
+    max_tokens = _resolve_max_tokens(data.max_tokens, max_output_cap)
     res = await service.chat(msg, max_tokens)
     return {
         "id": f"chatcmpl-{uuid.uuid4()}",
@@ -369,7 +436,8 @@ async def create_chat_completion_stream(
         return
 
     service, conv, model_id, msg = await _prepare(data, user, db)
-    max_tokens = int(data.max_tokens)
+    max_output_cap = service._kwargs.get("max_output_tokens") or 4096
+    max_tokens = _resolve_max_tokens(data.max_tokens, max_output_cap)
     cmpl_id = f"chatcmpl-{uuid.uuid4()}"
     created = int(time.time())
 

@@ -1,35 +1,5 @@
-from functools import lru_cache
-from urllib.parse import quote, unquote, urlsplit, urlunsplit
-
-from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
-def _normalize_database_url(value: str) -> str:
-    """Make database URLs safe for SQLAlchemy by escaping userinfo."""
-    parsed = urlsplit(value)
-    if not parsed.scheme.startswith("postgresql") or "@" not in parsed.netloc:
-        return value
-
-    userinfo, hostinfo = parsed.netloc.rsplit("@", 1)
-    if ":" not in userinfo:
-        safe_userinfo = quote(unquote(userinfo), safe="")
-    else:
-        username, password = userinfo.split(":", 1)
-        safe_userinfo = (
-            f"{quote(unquote(username), safe='')}:"
-            f"{quote(unquote(password), safe='')}"
-        )
-
-    return urlunsplit(
-        (
-            parsed.scheme,
-            f"{safe_userinfo}@{hostinfo}",
-            parsed.path,
-            parsed.query,
-            parsed.fragment,
-        )
-    )
+from functools import lru_cache
 
 
 class Settings(BaseSettings):
@@ -45,9 +15,9 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     ALLOWED_ORIGINS: list[str] = ["*"]
 
-   # ── Database ───────────────────────────────────────────────────────────────
-    # مقدار پیش‌فرض اصلاح شده با %40
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:Isiran%40123@localhost:5432/llm_server"
+# ── Database ───────────────────────────────────────────────────────────────
+    # تغییر localhost به 127.0.0.1 جهت دور زدن باگ uvloop
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:Isiran%40123@127.0.0.1:5432/llm_server"
     # ── JWT ────────────────────────────────────────────────────────────────────
     SECRET_KEY: str = "change-me-in-production-use-secrets-token-hex-64"
     ALGORITHM: str = "HS256"
@@ -75,10 +45,8 @@ class Settings(BaseSettings):
     RAG_CHUNK_OVERLAP: int = 200
     RAG_TOP_K: int = 4
 
-    @field_validator("DATABASE_URL")
-    @classmethod
-    def normalize_database_url(cls, value: str) -> str:
-        return _normalize_database_url(value)
+    # ── OCR ────────────────────────────────────────────────────────────────────
+    OCR_LANG: str = "fa"              # PaddleOCR language (fa = Persian + English)
 
 
 @lru_cache
