@@ -46,7 +46,8 @@ class Settings(BaseSettings):
     RAG_TOP_K: int = 4
 
     # ── OCR ────────────────────────────────────────────────────────────────────
-    OCR_LANG: str = "fa"              # PaddleOCR language (fa = Persian + English)
+    OCR_LANG: str = "fa"              # OCR language (fa = Persian + English)
+    OCR_GPU: bool = True               # Use GPU for easyocr when available
 
 
 @lru_cache

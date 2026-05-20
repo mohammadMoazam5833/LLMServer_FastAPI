@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import base64
+import logging
+import os
 import re
 import shutil
+import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,8 +18,51 @@ from app.config import get_settings
 from app.models.llm import RAGChunk, RAGFile
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 SUPPORTED_TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".csv", ".json", ".py", ".c", ".cpp", ".h"}
+SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp"}
+
+_reader = None
+
+
+def _get_reader():
+    global _reader
+    if _reader is None:
+        import easyocr
+
+        gpu = bool(settings.OCR_GPU)
+        if gpu:
+            try:
+                import torch
+                if not torch.cuda.is_available():
+                    logger.warning("easyocr GPU requested but torch.cuda is not available; falling back to CPU")
+                    gpu = False
+            except Exception as exc:
+                logger.warning("easyocr GPU requested but failed to import torch; falling back to CPU: %s", exc)
+                gpu = False
+
+        _reader = easyocr.Reader([settings.OCR_LANG or "fa", "en"], gpu=gpu)
+        logger.info("easyocr Reader initialized with %s", "GPU" if gpu else "CPU")
+    return _reader
+
+
+def ocr_base64_image(base64_data: str) -> str:
+    """OCR a base64-encoded image and return extracted text."""
+    try:
+        if "," in base64_data:
+            base64_data = base64_data.split(",", 1)[1]
+        image_bytes = base64.b64decode(base64_data)
+        suffix = ".png"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(image_bytes)
+            tmp_path = tmp.name
+        text = _extract_image_text(Path(tmp_path))
+        os.unlink(tmp_path)
+        return text.strip()
+    except Exception as exc:
+        logger.warning("OCR failed: %s", exc)
+        return ""
 
 
 def _safe_filename(filename: str) -> str:
@@ -54,10 +101,20 @@ def _extract_pdf_text(path: Path) -> str:
     return "\n\n".join(page.extract_text() or "" for page in reader.pages)
 
 
+def _extract_image_text(path: Path) -> str:
+    reader = _get_reader()
+    results = reader.readtext(str(path))
+    lines = [text for (_, text, conf) in results if conf > 0.3]
+    return "\n".join(lines)
+
+
 def extract_text(path: Path, content_type: str = "") -> str:
     suffix = path.suffix.lower()
     if suffix == ".pdf" or content_type == "application/pdf":
         return _extract_pdf_text(path)
+
+    if suffix in SUPPORTED_IMAGE_SUFFIXES or content_type.startswith("image/"):
+        return _extract_image_text(path)
 
     if suffix in SUPPORTED_TEXT_SUFFIXES or content_type.startswith("text/"):
         return path.read_text(encoding="utf-8", errors="ignore")

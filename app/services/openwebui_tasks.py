@@ -29,7 +29,14 @@ def _message_role(message: Any) -> str:
 
 
 def _message_content(message: Any) -> str:
-    return message.content if hasattr(message, "content") else message.get("content", "")
+    raw = message.content if hasattr(message, "content") else message.get("content", "")
+    if isinstance(raw, list):
+        parts = []
+        for part in raw:
+            if isinstance(part, dict) and part.get("type") == "text":
+                parts.append(part.get("text", ""))
+        return " ".join(parts)
+    return raw if isinstance(raw, str) else str(raw)
 
 
 def is_openwebui_internal_task(content: str) -> bool:
