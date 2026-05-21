@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     RAG_CHUNK_SIZE: int = 1200
     RAG_CHUNK_OVERLAP: int = 200
     RAG_TOP_K: int = 4
+    RAG_MIN_SCORE: float = 0.10
+    RAG_MAX_CONTEXT_TOKENS: int = 2048
+    RAG_EMBEDDING_DIM: int = 512
 
     # ── OCR ────────────────────────────────────────────────────────────────────
     OCR_LANG: str = "fa"              # OCR language (fa = Persian + English)

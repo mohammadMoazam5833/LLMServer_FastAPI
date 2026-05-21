@@ -95,8 +95,10 @@ def _with_rag_context(messages: list[dict], context: str) -> list[dict]:
     system_message = {
         "role": "system",
         "content": (
-            "Use the following retrieved document context when it is relevant. "
-            "If the context does not answer the user, say so and answer from general knowledge.\n\n"
+            "You are given retrieved document context from uploaded files. "
+            "Use this context only when it directly supports the user query. "
+            "If the context is not relevant, do not force it into the answer. "
+            "Answer from your knowledge when the retrieved context does not apply.\n\n"
             f"{context}"
         ),
     }

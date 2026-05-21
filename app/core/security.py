@@ -11,6 +11,7 @@ from typing import Any
 
 from jose import jwt, JWTError
 from passlib.context import CryptContext
+from passlib.exc import UnknownHashError
 
 from app.config import get_settings
 
@@ -20,7 +21,9 @@ settings = get_settings()
 
 
 # ── Password ───────────────────────────────────────────────────────────────────
-_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Existing users have Django pbkdf2_sha256 hashes in the database, so accept that
+# scheme plus bcrypt for new passwords.
+_pwd_ctx = CryptContext(schemes=["django_pbkdf2_sha256", "bcrypt"], deprecated="auto")
 
 
 def hash_password(plain: str) -> str:
@@ -28,7 +31,10 @@ def hash_password(plain: str) -> str:
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return _pwd_ctx.verify(plain, hashed)
+    try:
+        return _pwd_ctx.verify(plain, hashed)
+    except UnknownHashError:
+        return False
 
 
 # ── JWT ────────────────────────────────────────────────────────────────────────

@@ -16,9 +16,42 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.llm import RAGChunk, RAGFile
+from app.services.token_utils import estimate_text_tokens
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
+
+_rag_vectorizer = None
+
+
+def _get_rag_vectorizer():
+    global _rag_vectorizer
+    if _rag_vectorizer is None:
+        from sklearn.feature_extraction.text import HashingVectorizer
+
+        _rag_vectorizer = HashingVectorizer(
+            n_features=settings.RAG_EMBEDDING_DIM,
+            alternate_sign=False,
+            norm="l2",
+            ngram_range=(1, 2),
+            analyzer="word",
+            token_pattern=r"\w+",
+        )
+    return _rag_vectorizer
+
+
+def _embed_text(text: str) -> list[float]:
+    if not text:
+        return []
+    vectorizer = _get_rag_vectorizer()
+    embedding = vectorizer.transform([text]).toarray()[0]
+    return embedding.tolist()
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    return sum(x * y for x, y in zip(a, b))
 
 SUPPORTED_TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".csv", ".json", ".py", ".c", ".cpp", ".h"}
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp"}
@@ -166,13 +199,16 @@ async def ingest_rag_file(db: AsyncSession, rag_file: RAGFile) -> RAGFile:
             raise ValueError("No extractable text found in file")
 
         await db.execute(delete(RAGChunk).where(RAGChunk.file_id == rag_file.id))
-        for index, chunk in enumerate(chunks):
+
+        embedding_list = [_embed_text(chunk) for chunk in chunks]
+        for index, (chunk, embedding) in enumerate(zip(chunks, embedding_list)):
             db.add(
                 RAGChunk(
                     file_id=rag_file.id,
                     chunk_index=index,
                     content=chunk,
                     token_count=max(1, len(chunk.split())),
+                    metadata_={"embedding": embedding},
                 )
             )
 
@@ -209,11 +245,13 @@ async def list_rag_files(db: AsyncSession, user_id: int) -> list[dict]:
     ]
 
 
-def _score(query_terms: set[str], content: str) -> int:
+def _score(query_terms: set[str], content: str) -> tuple[float, int]:
     if not query_terms:
-        return 0
-    content_lower = content.lower()
-    return sum(1 for term in query_terms if term in content_lower)
+        return 0.0, 0
+    content_terms = {term.lower() for term in re.findall(r"\w+", content or "") if len(term) > 2}
+    match_count = sum(1 for term in query_terms if term in content_terms)
+    score = match_count / len(query_terms) if query_terms else 0.0
+    return score, match_count
 
 
 async def retrieve_context(
@@ -223,6 +261,11 @@ async def retrieve_context(
     query: str,
 ) -> str:
     if not file_ids:
+        return ""
+
+    query_terms = {term.lower() for term in re.findall(r"\w+", query or "") if len(term) > 2}
+    if not query_terms:
+        logger.info("Empty or too short query for RAG retrieval; skipping context injection")
         return ""
 
     result = await db.execute(
@@ -235,19 +278,83 @@ async def retrieve_context(
         )
     )
     rows = result.all()
-    query_terms = {term.lower() for term in re.findall(r"\w+", query or "") if len(term) > 2}
-    ranked = sorted(
-        ((chunk, filename, _score(query_terms, chunk.content)) for chunk, filename in rows),
-        key=lambda item: item[2],
-        reverse=True,
-    )
-    selected = [item for item in ranked if item[2] > 0][: settings.RAG_TOP_K]
+    chunk_embeddings = []
+    for chunk, filename in rows:
+        embedding = None
+        if chunk.metadata_ and isinstance(chunk.metadata_, dict):
+            embedding = chunk.metadata_.get("embedding")
+        if isinstance(embedding, list) and len(embedding) == settings.RAG_EMBEDDING_DIM:
+            chunk_embeddings.append((chunk, filename, embedding))
+
+    ranked = []
+    if chunk_embeddings:
+        query_embedding = _embed_text(query)
+        if not query_embedding or sum(abs(x) for x in query_embedding) == 0:
+            logger.info("Query embedding is empty; skipping semantic RAG retrieval")
+            return ""
+        ranked = sorted(
+            (
+                (
+                    chunk,
+                    filename,
+                    max(
+                        _cosine_similarity(query_embedding, embedding),
+                        _score(query_terms, chunk.content)[0],
+                    ),
+                )
+                for chunk, filename, embedding in chunk_embeddings
+            ),
+            key=lambda item: item[2],
+            reverse=True,
+        )
+        logger.info("Using semantic+lexical retrieval for RAG context; candidate chunks=%d", len(ranked))
+    else:
+        ranked = sorted(
+            ((chunk, filename, *_score(query_terms, chunk.content)) for chunk, filename in rows),
+            key=lambda item: item[2],
+            reverse=True,
+        )
+        logger.info("No semantic embeddings available; falling back to lexical retrieval")
+
+    min_score = settings.RAG_MIN_SCORE
+    if len(query_terms) <= 3:
+        min_score = max(min_score, 0.5)
+
+    selected = [item for item in ranked if item[2] >= min_score][: settings.RAG_TOP_K]
     if not selected:
-        logger.info("No relevant RAG chunks found for query; skipping context injection")
+        logger.info(
+            "No RAG chunk passed min_score=%.2f for query with %d terms; skipping context injection",
+            min_score,
+            len(query_terms),
+        )
         return ""
 
+    max_context_tokens = settings.RAG_MAX_CONTEXT_TOKENS
+    tokens = 0
     blocks = []
-    for chunk, filename, _ in selected:
+    for chunk, filename, score in selected:
+        chunk_tokens = estimate_text_tokens(chunk.content)
+        if tokens + chunk_tokens > max_context_tokens:
+            logger.info(
+                "RAG context token limit reached: %d/%d tokens; stopping selection",
+                tokens,
+                max_context_tokens,
+            )
+            break
         blocks.append(f"[source: {filename}#{chunk.chunk_index}]\n{chunk.content}")
+        tokens += chunk_tokens
 
+    if not blocks:
+        logger.info(
+            "Relevant RAG chunks exist but none fit within %d token budget; skipping context injection",
+            max_context_tokens,
+        )
+        return ""
+
+    logger.info(
+        "Selected %d RAG chunks with min_score=%.2f and total_context_tokens=%d",
+        len(blocks),
+        min_score,
+        tokens,
+    )
     return "\n\n".join(blocks)
