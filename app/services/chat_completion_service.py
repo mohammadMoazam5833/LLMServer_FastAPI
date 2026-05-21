@@ -20,6 +20,7 @@ from app.runtime.provider_manager import ProviderManager
 from app.services.chat_service import ChatService
 from app.services.openwebui_tasks import is_openwebui_internal_request
 from app.services.rag_service import retrieve_context
+from app.services.token_utils import estimate_message_tokens, estimate_text_tokens
 from app.schemas.schemas import ChatCompletionRequest
 
 logger = logging.getLogger(__name__)
@@ -110,12 +111,11 @@ def _with_rag_context(messages: list[dict], context: str) -> list[dict]:
 
 
 def _estimate_tokens(text: str) -> int:
-    # Conservative approximation that works reasonably for mixed Persian/English text.
-    return max(1, len(text or "") // 3)
+    return estimate_text_tokens(text)
 
 
 def _message_token_count(message: dict) -> int:
-    return _estimate_tokens(message.get("content", "")) + 4
+    return estimate_message_tokens(message)
 
 
 def _trim_messages_to_budget(messages: list[dict], max_prompt_tokens: int) -> list[dict]:
@@ -164,15 +164,20 @@ def _prepare_provider_messages(
     messages = _with_rag_context(_to_openai_messages(data.messages), rag_context)
     max_output_tokens = _resolve_max_tokens(data.max_tokens, model.max_output_tokens)
     context_length = model.context_length or 8192
-    prompt_budget = max(512, context_length - max_output_tokens - 512)
+    safety_margin = 64
+    prompt_budget = max(512, context_length - max_output_tokens - safety_margin)
+
+    messages = _trim_messages_to_budget(messages, prompt_budget)
+    prompt_tokens = sum(_message_token_count(message) for message in messages)
+    max_output_tokens = min(max_output_tokens, max(1, context_length - prompt_tokens - safety_margin))
 
     rag_len = len(rag_context) if rag_context else 0
     logger.info(
-        "📝 prepare_provider_messages | model_ctx=%d | max_output=%d | prompt_budget=%d | rag_context_chars=%d | total_msgs=%d",
-        context_length, max_output_tokens, prompt_budget, rag_len, len(messages)
+        "📝 prepare_provider_messages | model_ctx=%d | max_output=%d | prompt_budget=%d | prompt_tokens=%d | rag_context_chars=%d | total_msgs=%d",
+        context_length, max_output_tokens, prompt_budget, prompt_tokens, rag_len, len(messages)
     )
 
-    return _trim_messages_to_budget(messages, prompt_budget)
+    return messages
 
 
 def _file_ids(data: ChatCompletionRequest) -> list[uuid.UUID]:

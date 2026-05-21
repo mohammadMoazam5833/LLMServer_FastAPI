@@ -14,6 +14,7 @@ from typing import AsyncIterator
 import httpx
 
 from app.config import get_settings
+from app.services.token_utils import estimate_message_tokens
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ class VLLMHttpGenerator:
     ) -> dict:
         msg_count = len(messages)
         total_input_chars = sum(len(m.get("content", "") or "") for m in messages)
-        estimated_input_tokens = total_input_chars // 3
+        estimated_input_tokens = sum(estimate_message_tokens(m) for m in messages)
         payload = {
             "model": self.model,
             "messages": messages,
@@ -85,7 +86,7 @@ class VLLMHttpGenerator:
     ) -> AsyncIterator[str]:
         msg_count = len(messages)
         total_input_chars = sum(len(m.get("content", "") or "") for m in messages)
-        estimated_input_tokens = total_input_chars // 3
+        estimated_input_tokens = sum(estimate_message_tokens(m) for m in messages)
         payload = {
             "model": self.model,
             "messages": messages,
