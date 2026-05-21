@@ -243,7 +243,8 @@ async def retrieve_context(
     )
     selected = [item for item in ranked if item[2] > 0][: settings.RAG_TOP_K]
     if not selected:
-        selected = ranked[: settings.RAG_TOP_K]
+        logger.info("No relevant RAG chunks found for query; skipping context injection")
+        return ""
 
     blocks = []
     for chunk, filename, _ in selected:
