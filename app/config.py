@@ -33,7 +33,7 @@ class Settings(BaseSettings):
 
     # ── LLM Runtime ───────────────────────────────────────────────────────────
     VLLM_BASE_URL: str = "http://127.0.0.1:8003/v1"
-    VLLM_DEFAULT_MODEL: str = "/home/moazemi-gc/Qwen3-Coder-30B-A3B-Instruct"
+    VLLM_DEFAULT_MODEL: str = "/home/moazemi-gc/extra_space/models/Qwen3-Coder-30B-A3B-Instruct"
     VLLM_REQUEST_TIMEOUT: float = 300.0
 
     # ── Chain Manager TTL ─────────────────────────────────────────────────────
@@ -44,14 +44,15 @@ class Settings(BaseSettings):
     RAG_CHUNK_SIZE: int = 1200
     RAG_CHUNK_OVERLAP: int = 200
     RAG_TOP_K: int = 4
-    RAG_MIN_SCORE: float = 0.10
+    RAG_MIN_SCORE: float = 0.30
     RAG_MAX_CONTEXT_TOKENS: int = 2048
     RAG_EMBEDDING_DIM: int = 512
 
     # ── OCR ────────────────────────────────────────────────────────────────────
     OCR_LANG: str = "fa"              # OCR language (fa = Persian + English)
-    OCR_GPU: bool = True               # Use GPU for easyocr when available
-
+    OCR_GPU: bool = False               # Use GPU for easyocr when available
+    # آدرس میکروسرویس تک‌ورکره OCR
+    OCR_SERVICE_URL :str = "http://127.0.0.1:8010/api/v1/ocr"
 
 @lru_cache
 def get_settings() -> Settings:

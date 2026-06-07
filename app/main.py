@@ -27,6 +27,7 @@ import app.models  # noqa: F401
 from app.api.auth.router import router as auth_router
 from app.api.internal.router import router as internal_router
 from app.api.openai.router import router as openai_router
+from app.api.code_bot.router import router as code_bot_router
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -109,6 +110,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router, prefix="/api/v1/auth")
     app.include_router(internal_router, prefix="/api/v1")
     app.include_router(openai_router, prefix="/v1")
+    app.include_router(code_bot_router, prefix="/code_bot/v1")
 
     return app
 
