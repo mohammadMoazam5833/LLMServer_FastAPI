@@ -60,10 +60,24 @@ async def lifespan(app: FastAPI):
     # ── Startup ────────────────────────────────────────────────────────────────
     logger.info("🚀 Starting up LLM FastAPI server…")
 
+    from app.core.redis_client import ping as redis_ping
+    if await redis_ping():
+        logger.info("✅ Redis connected (%s)", settings.REDIS_URL)
+    else:
+        logger.warning(
+            "⚠️  Redis unavailable at %s — rate limit/quota/attachment cache use in-memory fallback",
+            settings.REDIS_URL,
+        )
+
     logger.info("Database URL: %s", engine.url)
-    # Auto-create tables (use Alembic in production instead)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # ساخت خودکار جداول فقط در حالت توسعه؛ در production با AUTO_CREATE_TABLES=false
+    # از مهاجرت‌های Alembic استفاده کنید (`alembic upgrade head`).
+    if settings.AUTO_CREATE_TABLES:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("🧱 Tables ensured via create_all (dev mode)")
+    else:
+        logger.info("🧱 AUTO_CREATE_TABLES disabled — manage schema with Alembic")
 
     _cleanup_task = asyncio.create_task(_chain_cleanup_loop())
     logger.info("✅ Server ready")
@@ -83,6 +97,12 @@ async def lifespan(app: FastAPI):
     from app.runtime.generator_factory import GeneratorFactory
     await GeneratorFactory.close_all()
 
+    from app.core.rate_limit import aclose as close_rate_limit_redis
+    await close_rate_limit_redis()
+
+    from app.core.redis_client import aclose as close_shared_redis
+    await close_shared_redis()
+
     await engine.dispose()
     logger.info("👋 Shutdown complete")
 
@@ -98,10 +118,13 @@ def create_app() -> FastAPI:
     )
 
     # CORS
+    # طبق اسپک، allow_origins=["*"] با allow_credentials=True نامعتبر است و مرورگرها
+    # آن را رد می‌کنند؛ پس فقط وقتی origin مشخص باشد credential مجاز می‌شود.
+    allow_credentials = "*" not in settings.ALLOWED_ORIGINS
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.ALLOWED_ORIGINS,
-        allow_credentials=True,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
@@ -111,6 +134,17 @@ def create_app() -> FastAPI:
     app.include_router(internal_router, prefix="/api/v1")
     app.include_router(openai_router, prefix="/v1")
     app.include_router(code_bot_router, prefix="/code_bot/v1")
+
+    @app.get("/health")
+    async def health():
+        from app.core.redis_client import ping as redis_ping
+        from app.core.attachment_cache import ping as attach_cache_ping
+        redis_ok = await redis_ping()
+        return {
+            "status": "ok",
+            "redis": redis_ok,
+            "attachment_cache_redis": attach_cache_ping(),
+        }
 
     return app
 

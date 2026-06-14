@@ -14,10 +14,13 @@ class Settings(BaseSettings):
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = True
     ALLOWED_ORIGINS: list[str] = ["*"]
+    # در حالت توسعه جداول خودکار ساخته می‌شوند؛ در production این را false کنید و از Alembic استفاده کنید.
+    AUTO_CREATE_TABLES: bool = True
 
 # ── Database ───────────────────────────────────────────────────────────────
-    # تغییر localhost به 127.0.0.1 جهت دور زدن باگ uvloop
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:Isiran%40123@127.0.0.1:5432/llm_server"
+    # مقدار واقعی باید از فایل .env یا secret manager بیاید؛ این فقط placeholder است.
+    # (از 127.0.0.1 به‌جای localhost برای دور زدن باگ uvloop استفاده کنید)
+    DATABASE_URL: str = "postgresql+asyncpg://user:password@127.0.0.1:5432/llm_server"
     # ── JWT ────────────────────────────────────────────────────────────────────
     SECRET_KEY: str = "change-me-in-production-use-secrets-token-hex-64"
     ALGORITHM: str = "HS256"
@@ -36,6 +39,12 @@ class Settings(BaseSettings):
     VLLM_DEFAULT_MODEL: str = "/home/moazemi-gc/extra_space/models/Qwen3-Coder-30B-A3B-Instruct"
     VLLM_REQUEST_TIMEOUT: float = 300.0
 
+    # سقف کانتکست برای مسیر چت (OpenWebUI و API داخلی). روت code_bot/Cline پروکسی خام است
+    # و از این سقف عبور نمی‌کند، پس Cline همچنان از کل max-model-len واقعی vLLM استفاده می‌کند.
+    CHAT_MAX_CONTEXT_TOKENS: int = 65536
+    # حداقل توکن خروجی وقتی OpenWebUI max_tokens=2048 می‌فرستد ولی کانتکست جا دارد
+    CHAT_MIN_OUTPUT_TOKENS: int = 4096
+
     # ── Chain Manager TTL ─────────────────────────────────────────────────────
     CHAIN_TTL_SECONDS: int = 1800         # 30 minutes idle eviction
 
@@ -46,7 +55,10 @@ class Settings(BaseSettings):
     RAG_TOP_K: int = 4
     RAG_MIN_SCORE: float = 0.30
     RAG_MAX_CONTEXT_TOKENS: int = 2048
-    RAG_EMBEDDING_DIM: int = 512
+    RAG_EMBEDDING_DIM: int = 384
+    RAG_EMBEDDING_MODEL: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    RAG_EMBEDDING_DEVICE: str = "cpu"
+    RAG_MAX_FILE_SIZE_MB: int = 25       # سقف حجم فایل آپلودی برای RAG
 
     # ── OCR ────────────────────────────────────────────────────────────────────
     OCR_LANG: str = "fa"              # OCR language (fa = Persian + English)

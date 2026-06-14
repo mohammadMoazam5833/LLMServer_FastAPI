@@ -34,14 +34,16 @@ async def list_conversations(
     ]
 
 
-async def get_conversation_detail(conv_id: uuid.UUID, db: AsyncSession) -> dict:
-    result = await db.execute(
+async def get_conversation_detail(conv_id: uuid.UUID, db: AsyncSession, user_id: int) -> dict:
+    query = (
         select(Conversation)
-        .where(Conversation.id == conv_id)
+        .where(Conversation.id == conv_id, Conversation.user_id == user_id)
         .options(selectinload(Conversation.messages))
     )
+    result = await db.execute(query)
     conv = result.scalar_one_or_none()
     if conv is None:
+        # 404 برای جلوگیری از افشای وجود مکالمه‌ی کاربران دیگر (جلوگیری از enumeration)
         from fastapi import HTTPException, status
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
 

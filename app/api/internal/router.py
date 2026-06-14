@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,14 +26,17 @@ from app.schemas.schemas import (
     APIKeyCreatedResponse,
     RAGFileResponse,
 )
-from app.services.chat_completion_service import create_chat_completion
+from app.services.chat_completion_service import (
+    create_chat_completion,
+    create_chat_completion_stream,
+)
 from app.services.model_service import (
     list_models,
     list_conversations,
     get_conversation_detail,
     create_api_key,
 )
-from app.services.rag_service import create_rag_file, list_rag_files
+from app.services.rag_service import create_rag_file, list_rag_files, get_rag_file_for_user, reindex_rag_file
 
 router = APIRouter(tags=["Internal"])
 
@@ -45,6 +49,15 @@ async def internal_chat_completions(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if body.stream:
+        return StreamingResponse(
+            create_chat_completion_stream(body, user, db),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
     return await create_chat_completion(body, user, db)
 
 
@@ -76,7 +89,7 @@ async def chat_detail(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    return await get_conversation_detail(chat_id, db)
+    return await get_conversation_detail(chat_id, db, user_id=user.id)
 
 
 # ── RAG Files ─────────────────────────────────────────────────────────────────
@@ -106,6 +119,27 @@ async def files(
     db: AsyncSession = Depends(get_db),
 ):
     return {"object": "list", "data": await list_rag_files(db, user.id)}
+
+
+@router.post("/files/{file_id}/reindex", response_model=RAGFileResponse)
+async def reindex_file(
+    file_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    rag_file = await get_rag_file_for_user(db, user.id, file_id)
+    if rag_file is None:
+        raise HTTPException(status_code=404, detail="File not found")
+    rag_file = await reindex_rag_file(db, rag_file)
+    chunk_count = await db.scalar(select(func.count(RAGChunk.id)).where(RAGChunk.file_id == rag_file.id))
+    return RAGFileResponse(
+        id=rag_file.id,
+        filename=rag_file.filename,
+        content_type=rag_file.content_type,
+        status=rag_file.status,
+        created_at=rag_file.created_at,
+        chunk_count=chunk_count or 0,
+    )
 
 
 # ── API Keys ───────────────────────────────────────────────────────────────────

@@ -21,6 +21,9 @@ langchain-classic>=0.0.1           # ConversationBufferWindowMemory
 langchain-community>=0.2.0
 langchain-redis>=0.1.0
 
+# ── Cache / Rate limiting ──────────────────────────────────────────────────────
+redis>=5.0.0                       # async client for chat memory + rate limit/quota
+
 # ── HTTP Client ────────────────────────────────────────────────────────────────
 httpx>=0.27.0
 
@@ -29,4 +32,7 @@ python-dotenv>=1.0.0
 python-multipart>=0.0.9            # Form data support
 pypdf>=4.0.0                       # PDF text extraction for RAG uploads
 easyocr>=1.7.0                      # OCR support for image-based RAG uploads
-scikit-learn>=1.3.0                # TF-IDF/HashingVectorizer for lightweight semantic retrieval
+sentence-transformers>=3.0.0         # Semantic embeddings for RAG retrieval
+
+# ── Dev / Testing ────────────────────────────────────────────────────────────
+pytest>=8.0.0

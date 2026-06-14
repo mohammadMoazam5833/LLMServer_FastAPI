@@ -58,6 +58,14 @@ async def openai_chat_completions(
         )
 
     result = await create_openai_chat_completion(body, user, db)
+
+    # ثبت مصرف توکن برای سهمیه‌ی ماهانه (در صورت وجود usage)
+    api_key_id = getattr(request.state, "api_key_id", None)
+    total_tokens = (result.get("usage") or {}).get("total_tokens", 0)
+    if api_key_id and total_tokens:
+        from app.core.rate_limit import record_tokens
+        await record_tokens(api_key_id, total_tokens)
+
     return result
 
 

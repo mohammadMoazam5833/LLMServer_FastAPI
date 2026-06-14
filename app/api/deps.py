@@ -18,6 +18,7 @@ from app.database import get_db
 from app.models.user import User
 from app.models.api_key import APIKey
 from app.core.security import decode_token, hash_api_key
+from app.core.rate_limit import enforce_rate_limit, enforce_quota
 
 # ── JWT Bearer ─────────────────────────────────────────────────────────────────
 _bearer = HTTPBearer(auto_error=False)
@@ -94,6 +95,12 @@ async def require_api_key(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or revoked API key.",
         )
+
+    # اعمال محدودیت نرخ و سهمیه‌ی ماهانه برای این کلید + ذخیره‌ی شناسه برای ثبت مصرف
+    api_key_id = str(api_key_obj.id)
+    request.state.api_key_id = api_key_id
+    await enforce_rate_limit(api_key_id, api_key_obj.rate_limit_per_minute)
+    await enforce_quota(api_key_id, api_key_obj.monthly_token_quota)
 
     # Load user via a second query (avoids lazy-load on async session)
     user_result = await db.execute(

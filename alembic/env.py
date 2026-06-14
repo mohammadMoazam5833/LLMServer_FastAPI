@@ -12,9 +12,15 @@ from alembic import context
 
 # Import your models so Alembic can detect them
 from app.database import Base
+from app.config import get_settings
 import app.models  # noqa: F401 — ensures all models are registered
 
 config = context.config
+
+# URL واقعی را از تنظیمات برنامه (فایل .env) می‌گیریم تا credential در alembic.ini نباشد.
+# علامت % باید برای جلوگیری از تداخل با interpolation فایل ini دوبل شود (مثل %40 در رمز).
+_db_url = get_settings().DATABASE_URL.replace("%", "%%")
+config.set_main_option("sqlalchemy.url", _db_url)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

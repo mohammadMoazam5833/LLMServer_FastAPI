@@ -503,13 +503,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.models.llm import RAGChunk, RAGFile
+from app.services.embedding_service import embed_text, embed_texts
 from app.services.token_utils import estimate_text_tokens
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
 # آرایه‌ها و متغیرهای سراسری سیستم
-_rag_vectorizer = None
 _reader = None
 _reader_lock = asyncio.Lock()
 _ocr_cache: dict[str, str] = {}
@@ -518,28 +518,10 @@ SUPPORTED_TEXT_SUFFIXES = {".txt", ".md", ".markdown", ".csv", ".json", ".py", "
 SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tiff", ".tif", ".webp"}
 
 
-# ─── VECTORIZER & EMBEDDINGS ──────────────────────────────────────────────────
-
-def _get_rag_vectorizer():
-    global _rag_vectorizer
-    if _rag_vectorizer is None:
-        from sklearn.feature_extraction.text import HashingVectorizer
-        _rag_vectorizer = HashingVectorizer(
-            n_features=settings.RAG_EMBEDDING_DIM,
-            alternate_sign=False,
-            norm="l2",
-            ngram_range=(1, 2),
-            analyzer="word",
-            token_pattern=r"\w+",
-        )
-    return _rag_vectorizer
-
+# ─── EMBEDDINGS ───────────────────────────────────────────────────────────────
 
 def _embed_text(text: str) -> list[float]:
-    if not text:
-        return []
-    vectorizer = _get_rag_vectorizer()
-    return vectorizer.transform([text]).toarray()[0].tolist()
+    return embed_text(text)
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -665,16 +647,59 @@ async def extract_text_async(path: Path, content_type: str = "") -> str:
 
 # ─── INGESTION PIPELINE ───────────────────────────────────────────────────────
 
+def _validate_upload_type(filename: str, content_type: str) -> None:
+    """فقط پسوندها/نوع‌های پشتیبانی‌شده اجازه‌ی آپلود دارند."""
+    suffix = Path(filename or "").suffix.lower()
+    allowed = SUPPORTED_TEXT_SUFFIXES | SUPPORTED_IMAGE_SUFFIXES | {".pdf"}
+    ctype = (content_type or "").lower()
+    ctype_ok = (
+        ctype == "application/pdf"
+        or ctype.startswith("image/")
+        or ctype.startswith("text/")
+    )
+    if suffix not in allowed and not ctype_ok:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"Unsupported file type: {suffix or content_type or 'unknown'}",
+        )
+
+
 async def create_rag_file(db: AsyncSession, user_id: int, upload: UploadFile, process: bool = True) -> RAGFile:
     upload_dir = Path(settings.RAG_UPLOAD_DIR)
     upload_dir.mkdir(parents=True, exist_ok=True)
+
+    _validate_upload_type(upload.filename or "", upload.content_type or "")
 
     file_id = uuid.uuid4()
     filename = _safe_filename(upload.filename or "upload.bin")
     path = upload_dir / f"{file_id}_{filename}"
 
-    with path.open("wb") as out:
-        shutil.copyfileobj(upload.file, out)
+    # کپی استریمی با اعمال سقف حجم تا از پر شدن دیسک / DoS جلوگیری شود
+    max_bytes = max(1, settings.RAG_MAX_FILE_SIZE_MB) * 1024 * 1024
+    written = 0
+    try:
+        with path.open("wb") as out:
+            while True:
+                chunk = await upload.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_bytes:
+                    out.close()
+                    path.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail=f"File exceeds maximum allowed size of {settings.RAG_MAX_FILE_SIZE_MB} MB",
+                    )
+                out.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to store uploaded file: {exc}",
+        )
 
     rag_file = RAGFile(
         id=file_id, user_id=user_id, filename=filename,
@@ -697,8 +722,8 @@ async def ingest_rag_file(db: AsyncSession, rag_file: RAGFile) -> RAGFile:
 
         await db.execute(delete(RAGChunk).where(RAGChunk.file_id == rag_file.id))
 
-        for index, chunk in enumerate(chunks):
-            embedding = _embed_text(chunk)
+        embeddings = embed_texts(chunks)
+        for index, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
             db.add(
                 RAGChunk(
                     file_id=rag_file.id, chunk_index=index, content=chunk,
@@ -714,6 +739,41 @@ async def ingest_rag_file(db: AsyncSession, rag_file: RAGFile) -> RAGFile:
         rag_file.status, rag_file.error = "failed", str(exc)
         await db.flush()
         raise
+
+
+async def reindex_rag_file(db: AsyncSession, rag_file: RAGFile) -> RAGFile:
+    """بازسازی embedding چانک‌های موجود با مدل فعلی (بدون re-extract فایل)."""
+    result = await db.execute(
+        select(RAGChunk)
+        .where(RAGChunk.file_id == rag_file.id)
+        .order_by(RAGChunk.chunk_index)
+    )
+    chunks = list(result.scalars().all())
+    if not chunks:
+        return await ingest_rag_file(db, rag_file)
+
+    embeddings = embed_texts([c.content for c in chunks])
+    if len(embeddings) != len(chunks):
+        raise ValueError("Embedding batch size mismatch")
+
+    for chunk, embedding in zip(chunks, embeddings):
+        meta = dict(chunk.metadata_ or {}) if isinstance(chunk.metadata_, dict) else {}
+        meta["embedding"] = embedding
+        chunk.metadata_ = meta
+
+    rag_file.status, rag_file.error = "ready", ""
+    rag_file.processed_at = datetime.now(timezone.utc)
+    await db.flush()
+    return rag_file
+
+
+async def get_rag_file_for_user(
+    db: AsyncSession, user_id: int, file_id: uuid.UUID
+) -> RAGFile | None:
+    result = await db.execute(
+        select(RAGFile).where(RAGFile.id == file_id, RAGFile.user_id == user_id)
+    )
+    return result.scalar_one_or_none()
 
 
 async def list_rag_files(db: AsyncSession, user_id: int) -> list[dict]:

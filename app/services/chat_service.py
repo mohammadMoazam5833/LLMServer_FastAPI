@@ -11,10 +11,12 @@ from __future__ import annotations
 import logging
 from typing import AsyncIterator
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.langchain_integration.chain_manager import ChainManager
 from app.models.llm import Conversation, Message
+from app.services.token_utils import estimate_text_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -49,19 +51,60 @@ class ChatService:
         )
 
     async def _save_message(self, role: str, content: str):
+        tokens = estimate_text_tokens(content)
         msg = Message(
             conversation_id=self.conversation.id,
             role=role,
             content=content,
+            prompt_tokens=tokens if role == Message.ROLE_USER else 0,
+            completion_tokens=tokens if role == Message.ROLE_ASSISTANT else 0,
         )
         self.db.add(msg)
         await self.db.flush()  # write without committing (caller commits)
 
+    async def _hydrate_memory(self, memory) -> None:
+        """
+        اگر حافظه‌ی Redis خالی باشد (مثلاً پس از eviction چین یا انقضای TTL)، تاریخچه‌ی
+        مکالمه از PostgreSQL بازیابی و درون حافظه بارگذاری می‌شود تا مدل بافت قبلی را از دست ندهد.
+        Redis منبع حقیقت است؛ اگر داده داشت، هیچ بازنویسی‌ای انجام نمی‌شود.
+        """
+        try:
+            if memory.chat_memory.messages:
+                return
+        except Exception as exc:  # دسترسی به Redis ناموفق بود؛ بی‌صدا رد می‌شویم
+            logger.warning("⚠️  Could not read Redis memory for hydration: %s", exc)
+            return
+
+        result = await self.db.execute(
+            select(Message)
+            .where(
+                Message.conversation_id == self.conversation.id,
+                Message.role != Message.ROLE_SYSTEM,
+            )
+            .order_by(Message.created_at)
+        )
+        history = result.scalars().all()
+        if not history:
+            return
+
+        pending_user: str | None = None
+        pairs = 0
+        for m in history:
+            if m.role == Message.ROLE_USER:
+                pending_user = m.content
+            elif m.role == Message.ROLE_ASSISTANT and pending_user is not None:
+                memory.save_context({"input": pending_user}, {"output": m.content})
+                pending_user = None
+                pairs += 1
+        if pairs:
+            logger.info("💧 Hydrated %d turn(s) into Redis memory from DB | conv=%s", pairs, self.conversation.id)
+
     # ── Non-streaming ──────────────────────────────────────────────────────────
     async def chat(self, user_message: str, max_new_tokens: int) -> dict:
+        chain, memory, _ = await self._get_chain()
+        await self._hydrate_memory(memory)
         await self._save_message(Message.ROLE_USER, user_message)
 
-        chain, memory, _ = await self._get_chain()
         config = {"configurable": {"max_tokens": int(max_new_tokens)}}
 
         try:
@@ -79,9 +122,10 @@ class ChatService:
 
     # ── Streaming ──────────────────────────────────────────────────────────────
     async def stream(self, user_message: str, max_new_tokens: int) -> AsyncIterator[str]:
+        chain, memory, _ = await self._get_chain()
+        await self._hydrate_memory(memory)
         await self._save_message(Message.ROLE_USER, user_message)
 
-        chain, memory, _ = await self._get_chain()
         config = {"configurable": {"max_tokens": int(max_new_tokens)}}
         full_content = ""
 
