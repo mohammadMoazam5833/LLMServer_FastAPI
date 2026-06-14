@@ -162,16 +162,170 @@ def test_files_attached_false_on_text_followup():
     assert reason == "no-new-attach"
 
 
+def test_carrier_merge_skips_stale_files_when_question_repeats():
+    """PDF دوم: سؤال مشابه نباید فایل قدیمی حامل را دوباره attach کند."""
+    reset_memory_fallback()
+
+    query = "خلاصه این فایل را بگو"
+    pdf1 = (
+        "### Task:\nRespond using context.\n\n"
+        '<context>\n<source id="1" name="article_one.pdf">ARTICLE ONE BODY</source>\n</context>\n\n'
+        f"<user_query>\n{query}\n</user_query>\n"
+    )
+    turn1 = [_Msg("user", pdf1)]
+    reset_conversation_sources(messages=turn1)
+    remember_conversation_sources(None, turn1)
+
+    # کاربر PDF دوم فرستاده ولی OWUI هنوز فقط سؤال کوتاه + حامل قدیمی را فوروارد کرده
+    turn_stale = [
+        _Msg("user", pdf1),
+        _Msg("assistant", "خلاصه مقاله اول"),
+        _Msg("user", query),
+    ]
+    keep, allowed, reason = resolve_turn_file_scope([], turn_stale)
+    assert keep is False
+    assert allowed == set()
+    assert reason == "no-new-attach"
+
+
+def test_carrier_merge_only_fresh_sources_when_carrier_gains_pdf():
+    """حامل قدیمی + PDF جدید در همان پیام — فقط فایل تازه در allowed."""
+    reset_memory_fallback()
+
+    query = "خلاصه این فایل را بگو"
+    pdf1_carrier = (
+        "### Task:\nRespond using context.\n\n"
+        '<context>\n<source id="1" name="first.pdf">FIRST</source>\n</context>\n\n'
+        f"<user_query>\n{query}\n</user_query>\n"
+    )
+    turn1 = [_Msg("user", pdf1_carrier)]
+    remember_conversation_sources(None, turn1)
+
+    both = (
+        "### Task:\nRespond using context.\n\n"
+        '<context>\n'
+        '<source id="1" name="first.pdf">FIRST</source>\n'
+        '<source id="2" name="second.pdf">SECOND</source>\n'
+        "</context>\n\n"
+        f"<user_query>\n{query}\n</user_query>\n"
+    )
+    turn2 = [
+        _Msg("user", both),
+        _Msg("user", query),
+    ]
+    keep, allowed, reason = resolve_turn_file_scope([], turn2)
+    assert keep is True
+    assert reason.startswith("conv-delta:") or reason.startswith("carrier-merge:")
+    assert "second.pdf" in allowed
+    assert "first.pdf" not in allowed
+
+
+def test_last_message_file_kept_despite_stale_cache_collision():
+    """باگ کاربر: PDF در آخرین پیام، ولی کش از چت قبلی (تصادم anchor) آن را قدیمی می‌پندارد."""
+    reset_memory_fallback()
+
+    pdf_carrier = _carrier_with_sources([
+        ("1", "ling-et-al-2023.pdf", "PDF BODY " * 2000),
+    ])
+
+    # شبیه‌سازی تصادم: کش با همان conv_key از چت قبلی، فایل را «دیده» است
+    stale_chat = [
+        _Msg("user", "سلام"),
+        _Msg("assistant", "سلام"),
+        _Msg("user", pdf_carrier),
+    ]
+    remember_conversation_sources(None, stale_chat)
+
+    # چت «جدید» با همان anchor اول ولی PDF فقط در آخرین پیام
+    new_chat = [
+        _Msg("user", "سلام"),
+        _Msg("assistant", "سلام"),
+        _Msg("user", pdf_carrier),
+    ]
+    keep, allowed, reason = resolve_turn_file_scope([], new_chat)
+    assert keep is True
+    assert "ling-et-al-2023.pdf" in allowed
+    assert reason == "last-msg-fresh-source"
+
+
+def test_last_message_inline_pdf_without_source_kept_despite_cache_collision():
+    """OpenWebUI گاهی PDF را بدون <source> در آخرین پیام می‌گذارد؛ این هم فایل نوبت جاری است."""
+    reset_memory_fallback()
+
+    inline_pdf = (
+        "### Task:\nRespond using context.\n\n"
+        "<context>\n"
+        + ("PDF BODY WITHOUT SOURCE TAG " * 5000)
+        + "\n</context>\n\n"
+        "<user_query>\nخلاصه این مقاله رو بگو\n</user_query>\n"
+    )
+    stale_chat = [
+        _Msg("user", "سلام"),
+        _Msg("assistant", "سلام"),
+        _Msg("user", inline_pdf),
+    ]
+    remember_conversation_sources(None, stale_chat)
+
+    new_chat = [
+        _Msg("user", "سلام"),
+        _Msg("assistant", "سلام"),
+        _Msg("user", inline_pdf),
+    ]
+    keep, allowed, reason = resolve_turn_file_scope([], new_chat)
+    assert keep is True
+    assert allowed == set()
+    assert reason == "last-msg-inline-file"
+
+
+def test_last_message_fresh_source_ignores_history_files():
+    """فایل قدیمی در history + فایل جدید در آخرین پیام — فقط فایل جدید."""
+    reset_memory_fallback()
+
+    old_carrier = _carrier_with_sources([("1", "old.pdf", "OLD " * 1000)])
+    new_carrier = _carrier_with_sources([("2", "new.pdf", "NEW " * 1000)])
+
+    messages = [
+        _Msg("user", old_carrier),
+        _Msg("assistant", "خلاصه old"),
+        _Msg("user", new_carrier),
+    ]
+    keep, allowed, reason = resolve_turn_file_scope([], messages)
+    assert keep is True
+    assert "new.pdf" in allowed
+    assert "old.pdf" not in allowed
+    assert reason == "last-msg-fresh-source"
+
+
+def test_followup_question_without_file_does_not_leak_history():
+    """سؤال متنی بدون فایل — نباید فایل قدیمی history نشت کند."""
+    reset_memory_fallback()
+
+    carrier = _carrier_with_sources([("1", "doc.pdf", "BODY " * 1000)])
+    turn1 = [_Msg("user", carrier)]
+    remember_conversation_sources(None, turn1)
+
+    messages = [
+        _Msg("user", carrier),
+        _Msg("assistant", "خلاصه"),
+        _Msg("user", "یک سؤال نامرتبط بدون فایل"),
+    ]
+    keep, allowed, reason = resolve_turn_file_scope([], messages)
+    assert keep is False
+    assert reason == "no-new-attach"
+
+
 def test_files_attached_true_when_carrier_matches():
+    reset_memory_fallback()
+    reset_conversation_sources(messages=[_Msg("user", OWUI_TEMPLATE)])
     messages = [
         _Msg("user", OWUI_TEMPLATE),
         _Msg("user", "What is in all three files?"),
     ]
-    assert files_attached_this_turn([], messages)
     keep, allowed, reason = resolve_turn_file_scope([], messages)
     assert keep is True
     assert "file_a.txt" in allowed
     assert reason.startswith("carrier-merge:")
+    assert files_attached_this_turn([], messages)
 
 
 def test_new_sources_detected_when_openwebui_updates_first_message():

@@ -955,7 +955,7 @@ async def _to_openai_messages_async(
                 if hasattr(messages[content_idx], "content")
                 else messages[content_idx].get("content", "")
             )
-            effective = allowed or all_source_names(_raw_to_text(carrier_raw))
+            effective = allowed
             file_block = extract_carrier_file_content(carrier_raw, effective, keep_files=True)
             if file_block:
                 content = f"{file_block}\n\n{content}".strip() if content.strip() else file_block

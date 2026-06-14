@@ -669,6 +669,33 @@ def resolve_turn_file_scope(files, messages, conversation_id=None) -> tuple[bool
     if last_idx < 0:
         return False, set(), "no-user-message"
 
+    # سیگنال مستقل از کش: اگر منبع فایلی در «آخرین پیام» باشد که در پیام‌های
+    # قبلی همین درخواست نیست، یعنی همین نوبت ضمیمه شده — همیشه نگهش دار.
+    # این از تصادم کلید کش (وقتی OpenWebUI conversation_id نمی‌فرستد) جلوگیری می‌کند.
+    last_text = _raw_to_text(_get_raw_content(messages[last_idx]))
+    user_count = sum(1 for m in messages if _message_role(m) == "user")
+    last_sources = all_source_names(last_text)
+    if last_sources:
+        sources_in_history = _sources_before_index(messages, last_idx)
+        fresh_in_last = last_sources - sources_in_history
+        if fresh_in_last:
+            return True, fresh_in_last, "last-msg-fresh-source"
+    elif user_count > 1 and _looks_like_inline_file(last_text):
+        last_fp = _inline_fingerprint(last_text)
+        seen_same_inline = False
+        for i in range(last_idx):
+            if _message_role(messages[i]) != "user":
+                continue
+            prev_text = _raw_to_text(_get_raw_content(messages[i]))
+            if _inline_fingerprint(prev_text) == last_fp:
+                seen_same_inline = True
+                break
+        if not seen_same_inline:
+            return True, set(), "last-msg-inline-file"
+
+    conv_key = _conversation_key(conversation_id, messages)
+    remembered_before = get_seen_attachments(conv_key) if conv_key else None
+
     full_delta = attachments_delta_for_conversation(conversation_id, messages)
     new_images = {a for a in full_delta if a.startswith("img:")}
     new_non_image = full_delta - new_images
@@ -681,12 +708,17 @@ def resolve_turn_file_scope(files, messages, conversation_id=None) -> tuple[bool
     carrier_idx = find_turn_carrier_for_merge(messages, last_idx)
     if carrier_idx >= 0:
         carrier_allowed = all_source_names(_raw_to_text(_get_raw_content(messages[carrier_idx])))
-        return True, carrier_allowed, f"carrier-merge:{carrier_idx}"
+        if remembered_before is None:
+            # چت تازه — الگوی same-turn: فایل در پیام حامل، سؤال در آخرین پیام
+            return True, carrier_allowed, f"carrier-merge:{carrier_idx}"
+        fresh = carrier_allowed - remembered_before
+        if fresh:
+            return True, fresh, f"carrier-merge:{carrier_idx}"
+        # حامل قدیمی با سؤال مشابه — فایل‌های قبلی را دوباره attach نکن
 
     if _has_new_inline_file(messages, last_idx):
         return True, set(), "new-inline-file"
 
-    user_count = sum(1 for m in messages if _message_role(m) == "user")
     if user_count == 1:
         if _message_has_file_parts(messages[last_idx]):
             return True, set(), "single-turn-file-part"

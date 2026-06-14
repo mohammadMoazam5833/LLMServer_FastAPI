@@ -60,6 +60,17 @@ class Settings(BaseSettings):
     RAG_EMBEDDING_DEVICE: str = "cpu"
     RAG_MAX_FILE_SIZE_MB: int = 25       # سقف حجم فایل آپلودی برای RAG
 
+    # ── OpenWebUI file fetch (وقتی Bypass فایل را در messages فوروارد نمی‌کند)
+    OPENWEBUI_BASE_URL: str = "http://127.0.0.1:3000"
+    OPENWEBUI_API_KEY: str = ""  # JWT یا API key کاربر OWUI برای /api/v1/files/{id}/data/content
+    OPENWEBUI_FILE_FETCH_ENABLED: bool = True
+
+    # ── Auto-attach uploaded files for OpenWebUI fallback
+    # When True, if a chat request contains no `files`, the server will
+    # look for a recent upload by the same user and attach it automatically.
+    ALLOW_AUTO_ATTACH_RECENT_UPLOADS: bool = True
+    AUTO_ATTACH_TIME_WINDOW_SECONDS: int = 300  # 5 minutes
+
     # ── OCR ────────────────────────────────────────────────────────────────────
     OCR_LANG: str = "fa"              # OCR language (fa = Persian + English)
     OCR_GPU: bool = False               # Use GPU for easyocr when available

@@ -6,7 +6,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from typing import Literal, Any
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 
 
 # ── Auth ───────────────────────────────────────────────────────────────────────
@@ -67,10 +67,13 @@ class ChatFileReference(BaseModel):
 
 
 class ChatCompletionRequest(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     model: str
     messages: list[ChatMessage]
     conversation_id: uuid.UUID | None = None
     files: list[ChatFileReference] = Field(default_factory=list)
+    metadata: dict[str, Any] | None = None
     max_tokens: int = Field(default=2048, ge=1, le=32768)
     stream: bool = False
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)

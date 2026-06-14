@@ -17,17 +17,26 @@ from app.database import get_db
 from app.models.user import User
 from app.schemas.schemas import (
     ChatCompletionRequest,
-    ChatCompletionResponse,
     ModelListResponse,
+    ChatFileReference,
 )
 from app.services.chat_completion_service import (
     create_openai_chat_completion,
     create_openai_chat_completion_stream,
 )
 from app.services.model_service import list_models
+from app.services.rag_service import list_rag_files
+from app.services.openwebui_files import (
+    enrich_request_from_openwebui,
+    log_incoming_payload_summary,
+    sanitize_raw_for_validation,
+    resolve_owui_chat_id,
+)
+import logging
 from app.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["OpenAI Compatible"])
 
 
@@ -42,24 +51,55 @@ async def openai_list_models(
 
 @router.post("/chat/completions")
 async def openai_chat_completions(
-    body: ChatCompletionRequest,
     request: Request,
     user: User = Depends(require_api_key),
     db: AsyncSession = Depends(get_db),
 ):
+    raw = await request.json()
+    body = ChatCompletionRequest.model_validate(sanitize_raw_for_validation(raw))
+    chat_id = resolve_owui_chat_id(dict(request.headers), body)
+    log_incoming_payload_summary(raw, chat_id=chat_id)
+    body = await enrich_request_from_openwebui(raw, body, chat_id=chat_id)
+
+    # Auto-attach fallback: RAG files uploaded directly to this gateway
+    try:
+        if settings.ALLOW_AUTO_ATTACH_RECENT_UPLOADS and not body.files:
+            candidates = await list_rag_files(db, user.id)
+            from datetime import datetime, timezone
+
+            now = datetime.now(timezone.utc)
+            window = getattr(settings, "AUTO_ATTACH_TIME_WINDOW_SECONDS", 300)
+            recent = [
+                c for c in candidates
+                if c.get("status") in ("ready", "uploaded")
+                and isinstance(c.get("created_at"), datetime)
+                and (now - c["created_at"]).total_seconds() <= window
+            ]
+            if recent:
+                recent_sorted = sorted(recent, key=lambda r: r["created_at"], reverse=True)
+                chosen = recent_sorted[0]
+                logger.info(
+                    "Auto-attaching recent RAG upload %s for user %s",
+                    chosen.get("id"), user.id,
+                )
+                body = body.model_copy(
+                    update={"files": [ChatFileReference(id=str(chosen.get("id")))]}
+                )
+    except Exception:
+        logger.exception("Failed while attempting auto-attach recent upload")
+
     if body.stream:
         return StreamingResponse(
             create_openai_chat_completion_stream(body, user, db),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",   # disable nginx buffering for SSE
+                "X-Accel-Buffering": "no",
             },
         )
 
     result = await create_openai_chat_completion(body, user, db)
 
-    # ثبت مصرف توکن برای سهمیه‌ی ماهانه (در صورت وجود usage)
     api_key_id = getattr(request.state, "api_key_id", None)
     total_tokens = (result.get("usage") or {}).get("total_tokens", 0)
     if api_key_id and total_tokens:
@@ -72,7 +112,6 @@ async def openai_chat_completions(
 @router.get("/openapi.json", include_in_schema=False)
 async def openai_spec():
     """Serve the handcrafted OpenAPI spec."""
-    from app.config import get_settings
     spec_path = os.path.join(os.path.dirname(__file__), "..", "..", "openapi.json")
     try:
         with open(os.path.abspath(spec_path)) as f:
