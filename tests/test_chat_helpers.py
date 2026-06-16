@@ -56,6 +56,82 @@ def test_to_openai_messages_disables_ocr():
     assert out == messages
 
 
+def test_ocr_fallback_uses_last_images_when_new_not_detected(monkeypatch):
+    msg = {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "متن عکس را بخوان"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        ],
+    }
+
+    async def fake_ocr(_url: str) -> str:
+        return "OCR TEXT"
+
+    monkeypatch.setattr(ccs, "current_turn_images", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(ccs, "_ocr_image_url", fake_ocr)
+
+    out = asyncio.run(
+        ccs._to_openai_messages_async(
+            [msg],
+            scope_files_per_turn=True,
+            request_files=[],
+            conversation_id=None,
+        )
+    )
+    assert "OCR TEXT" in out[0]["content"]
+
+
+def test_mixed_pdf_and_two_inline_images_ocr_both(monkeypatch):
+    """سناریوی کاربر: PDF قدیمی + ۲ عکس inline جدید + تاریخچه — هر دو عکس OCR شوند."""
+    from app.services import openwebui_content as owc
+    from app.core.attachment_cache import reset_memory_fallback
+
+    reset_memory_fallback()
+    img_a = "data:image/png;base64," + ("A" * 120)
+    img_b = "data:image/png;base64," + ("B" * 120)
+    pdf = '<source id="1" name="old.pdf">' + ("PDF " * 2000) + "</source>"
+
+    # نوبت قبلی فقط PDF
+    turn1 = [{"role": "user", "content": f"<context>{pdf}</context>"}]
+    owc.reset_conversation_sources(messages=turn1)
+    owc.remember_conversation_sources(None, turn1)
+
+    last_blob = (
+        f"<context>{pdf}"
+        f'<source id="2" name="scan-a">{img_a}</source>'
+        f'<source id="3" name="scan-b">{img_b}</source></context>'
+        "<user_query>این دو عکس را با مقاله بررسی کن</user_query>"
+    )
+    messages = [
+        {"role": "user", "content": f"<context>{pdf}</context>"},
+        {"role": "assistant", "content": "خلاصه مقاله"},
+        {"role": "user", "content": "یک سؤال میانی"},
+        {"role": "assistant", "content": "پاسخ"},
+        {"role": "user", "content": last_blob},
+    ]
+
+    calls = []
+
+    async def fake_ocr(url: str) -> str:
+        calls.append(url)
+        return f"OCR[{url[-3:]}]"
+
+    monkeypatch.setattr(ccs, "_ocr_image_url", fake_ocr)
+
+    out = asyncio.run(
+        ccs._to_openai_messages_async(
+            messages,
+            scope_files_per_turn=True,
+            request_files=[],
+            conversation_id=None,
+        )
+    )
+    last_content = out[-1]["content"]
+    assert len(calls) == 2  # هر دو عکس OCR شدند
+    assert "OCR[" in last_content
+
+
 def test_trim_keeps_system_and_truncates_huge_last_message():
     huge = "token " * 5000
     messages = [

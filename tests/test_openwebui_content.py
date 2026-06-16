@@ -293,7 +293,7 @@ def test_last_message_fresh_source_ignores_history_files():
     assert keep is True
     assert "new.pdf" in allowed
     assert "old.pdf" not in allowed
-    assert reason == "last-msg-fresh-source"
+    assert reason in {"last-msg-fresh-source", "last-msg-fresh+delta"}
 
 
 def test_followup_question_without_file_does_not_leak_history():
@@ -511,6 +511,88 @@ def test_stale_image_in_last_message_not_reattached():
     assert current_turn_images(None, followup) == []
 
 
+def test_image_urls_from_source_in_bypass_template():
+    """OpenWebUI گاهی عکس را داخل <source> همراه PDF می‌فرستد."""
+    from app.services.openwebui_content import _message_image_urls
+
+    img_url = "data:image/png;base64,AAAA"
+    text = (
+        "### Task:\n<context>\n"
+        '<source id="1" name="doc.pdf">PDF BODY</source>\n'
+        f'<source id="2" name="photo.png">{img_url}</source>\n'
+        "</context>\n<user_query>بخوان</user_query>"
+    )
+    urls = _message_image_urls(_Msg("user", text))
+    assert img_url in urls
+
+
+def test_current_turn_image_in_source_with_pdf_history():
+    """عکس جدید در source آخرین پیام حتی وقتی PDF از قبل در مکالمه بود."""
+    img2 = _image_data_url("2")
+    pdf_block = '<source id="1" name="doc.pdf">' + ("P" * 3000) + "</source>"
+    turn1 = [_Msg("user", f"<context>{pdf_block}</context>")]
+    reset_conversation_sources(messages=turn1)
+    remember_conversation_sources(None, turn1)
+
+    turn2 = [
+        _Msg("user", f"<context>{pdf_block}</context>"),
+        _Msg("assistant", "ok"),
+        _Msg(
+            "user",
+            f"<context>{pdf_block}\n"
+            f'<source id="2" name="shot.png">{img2}</source></context>',
+        ),
+    ]
+    new_imgs = current_turn_images(None, turn2)
+    assert img2 in new_imgs
+
+
+def test_two_new_images_by_source_id_in_allowed():
+    """دو عکس با id مجزا در allowed — بدون پسوند .png."""
+    img2 = _image_data_url("aa")
+    img3 = _image_data_url("bb")
+    pdf = '<source id="1" name="doc.pdf">PDF BODY</source>'
+    turn1 = [_Msg("user", f"<context>{pdf}</context>")]
+    reset_conversation_sources(messages=turn1)
+    remember_conversation_sources(None, turn1)
+
+    turn2 = [
+        _Msg("user", f"<context>{pdf}</context>"),
+        _Msg("assistant", "ok"),
+        _Msg(
+            "user",
+            f"<context>{pdf}"
+            f'<source id="2" name="upload-1">{img2}</source>'
+            f'<source id="3" name="upload-2">{img3}</source></context>',
+        ),
+    ]
+    new_imgs = current_turn_images(None, turn2, allowed={"2", "3"})
+    assert img2 in new_imgs
+    assert img3 in new_imgs
+    assert len(new_imgs) == 2
+
+
+def test_new_image_in_carrier_when_last_message_is_text_only():
+    """عکس جدید در پیام حامل؛ آخرین پیام فقط متن سؤال."""
+    reset_memory_fallback()
+    pdf = '<source id="1" name="doc.pdf">PDF</source>'
+    turn1 = [_Msg("user", f"<context>{pdf}</context>")]
+    reset_conversation_sources(messages=turn1)
+    remember_conversation_sources(None, turn1)
+
+    img = _image_data_url("carrier-new")
+    turn2 = [
+        _Msg(
+            "user",
+            f"<context>{pdf}<source id='2' name='shot.png'>{img}</source></context>",
+        ),
+        _Msg("assistant", "ok"),
+        _Msg("user", "فقط این عکس جدید را توضیح بده"),
+    ]
+    new_imgs = current_turn_images(None, turn2, allowed={"2"})
+    assert img in new_imgs
+
+
 def test_new_image_detected_in_multiturn():
     img1 = _image_data_url("1")
     img2 = _image_data_url("2")
@@ -528,6 +610,102 @@ def test_new_image_detected_in_multiturn():
     new_imgs = current_turn_images(None, turn2)
     assert img2 in new_imgs
     assert img1 not in new_imgs
+
+
+def test_new_images_only_does_not_reattach_old_pdf_and_asc():
+    """دو عکس جدید — PDF و asc قدیمی در بلوک OWUI نباید دوباره attach شوند."""
+    reset_memory_fallback()
+    pdf = '<source id="1" name="1664710902_F2472-Farsi-e-tarjom.pdf">PDF BODY</source>'
+    asc = '<source id="4" name="openvpn.asc">ASC BODY</source>'
+    carrier_v1 = f"<context>{pdf}{asc}</context>"
+    turn1 = [_Msg("user", carrier_v1)]
+    reset_conversation_sources(messages=turn1)
+    remember_conversation_sources(None, turn1)
+
+    img2 = _image_data_url("two")
+    img3 = _image_data_url("three")
+    last_blob = (
+        f"<context>{pdf}{asc}"
+        f'<source id="2" name="scan-a">{img2}</source>'
+        f'<source id="3" name="scan-b">{img3}</source></context>'
+        "<user_query>این دو عکس را بررسی کن</user_query>"
+    )
+    turn2 = [
+        _Msg("user", carrier_v1),
+        _Msg("assistant", "ok"),
+        _Msg("user", last_blob),
+    ]
+
+    keep, allowed, reason = resolve_turn_file_scope([], turn2)
+    assert keep is True
+    assert "1664710902_F2472-Farsi-e-tarjom.pdf" not in allowed
+    assert "openvpn.asc" not in allowed
+    assert "2" in allowed and "3" in allowed
+    assert reason in {"last-msg-image-focused", "last-msg-fresh+delta"} or reason.startswith("new-images:")
+
+    scoped, _ = scope_message_content(
+        last_blob,
+        is_current_turn=True,
+        allowed_names=allowed,
+        keep_files=True,
+    )
+    assert "PDF BODY" not in scoped
+    assert "ASC BODY" not in scoped
+    assert "بررسی کن" in scoped
+
+
+def test_mixed_image_and_pdf_strips_image_body_from_source():
+    """عکس + PDF: بدنه تصویر در source خالی می‌شود (OCR جایگزین)."""
+    img = "data:image/png;base64,AAAA"
+    text = (
+        "<context>"
+        '<source id="1" name="article.pdf">PDF TEXT</source>'
+        f'<source id="4" name="scan.png">{img}</source>'
+        "</context>"
+        "<user_query>هر دو را بررسی کن</user_query>"
+    )
+    allowed = {"article.pdf", "4"}
+    scoped = filter_sources(text, allowed, strip_image_bodies=True)
+    assert "PDF TEXT" in scoped
+    assert "data:image" not in scoped
+    assert "OCR" in scoped
+    assert "بررسی کن" in scoped
+
+
+def test_image_source_base64_body_stripped_from_model_text():
+    """بدنه‌ی base64 تصویر نباید به مدل برود (مدل متنی است)."""
+    big_b64 = "A" * 4000
+    text = (
+        "<context>"
+        f'<source id="2" name="scan.png">data:image/png;base64,{big_b64}</source>'
+        "</context>"
+        "<user_query>این عکس را بخوان</user_query>"
+    )
+    scoped, _ = scope_message_content(
+        text,
+        is_current_turn=True,
+        allowed_names={"2"},
+        keep_files=True,
+    )
+    assert big_b64 not in scoped
+    assert "data:image" not in scoped
+    assert "بخوان" in scoped
+
+
+def test_image_focused_query_prefers_only_image_sources():
+    reset_memory_fallback()
+    pdf = '<source id="1" name="old.pdf">OLD PDF</source>'
+    img = _image_data_url("focus")
+    payload = (
+        f"<context>{pdf}<source id='2' name='scan-a'>{img}</source></context>"
+        "<user_query>فقط متن داخل عکس را بخوان</user_query>"
+    )
+    messages = [_Msg("user", payload)]
+    keep, allowed, reason = resolve_turn_file_scope([], messages)
+    assert keep is True
+    assert reason == "last-msg-image-focused"
+    assert "2" in allowed or "scan-a" in allowed
+    assert "old.pdf" not in allowed
 
 
 def test_conversation_key_stable_not_python_hash():

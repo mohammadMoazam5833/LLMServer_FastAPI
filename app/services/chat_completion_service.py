@@ -672,6 +672,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from typing import AsyncIterator
@@ -697,7 +698,10 @@ from app.services.openwebui_content import (
     remember_conversation_sources,
     current_turn_images,
     conversation_key,
+    _is_fetchable_image_url,
+    _message_image_urls,
     _raw_to_text,
+    _allowed_mixes_documents_and_images,
 )
 from app.services.rag_service import retrieve_context
 from app.services.token_utils import estimate_message_tokens, estimate_text_tokens
@@ -763,10 +767,56 @@ def _last_user_index(messages) -> int:
     return last
 
 
+_OCR_MIXED_ATTACH_HINT = (
+    "کاربر همزمان فایل متنی (مثل PDF) و تصویر فرستاده است. "
+    "متن استخراج‌شده از تصاویر در بلوک‌های [متن استخراج‌شده از تصویر پیوست] آمده — "
+    "حتماً آن‌ها را هم‌زمان با فایل متنی بررسی و در پاسخ لحاظ کن."
+)
+
+_MULTI_FILE_HINT = (
+    "چند فایل برای این نوبت ضمیمه شده است. همه‌ی فایل‌های موجود در <context> را "
+    "بررسی کن و در پاسخ به هر کدام جداگانه اشاره کن؛ هیچ فایلی را نادیده نگیر."
+)
+
+_SOURCE_DIAG_RE = re.compile(r"<source\b([^>]*)>(.*?)</source>", re.DOTALL | re.IGNORECASE)
+
+
+def _final_source_body_sizes(content: str) -> tuple[str, int]:
+    """خلاصه‌ی نام/id هر <source> و طول بدنه‌اش در پیام نهایی — برای دیباگ گم‌شدن فایل."""
+    if not content or "<source" not in content.lower():
+        return "no-source-tags", 0
+    parts: list[str] = []
+    count = 0
+    for sm in _SOURCE_DIAG_RE.finditer(content):
+        attrs, body = sm.group(1), (sm.group(2) or "")
+        nm = re.search(r"""name=["']([^"']+)["']""", attrs, re.IGNORECASE)
+        idm = re.search(r"""id=["']([^"']+)["']""", attrs, re.IGNORECASE)
+        label = (nm.group(1) if nm else "") or (f"id:{idm.group(1)}" if idm else "?")
+        parts.append(f"{label}={len(body.strip())}c")
+        count += 1
+    return (", ".join(parts) if parts else "no-source-tags"), count
+
+
+def _inject_ocr_after_user_query(content: str, ocr_text: str) -> str:
+    """OCR را بلافاصله بعد از سؤال کاربر می‌گذارد تا مدل آن را از دست ندهد."""
+    close = re.search(r"</user_query>", content, re.IGNORECASE)
+    if close:
+        pos = close.end()
+        return f"{content[:pos]}\n\n{ocr_text}\n{content[pos:]}".strip()
+    return f"{ocr_text}\n\n{content}".strip()
+
+
 async def _ocr_image_url(url: str) -> str:
-    """OCR یک data-URL تصویر از طریق سرویس OCR."""
+    """OCR تصویر — data-URL، HTTP یا فایل OpenWebUI."""
     from app.services.rag_service import ocr_base64_image
-    return await ocr_base64_image(url)
+    from app.services.openwebui_files import fetch_image_base64_for_ocr
+
+    if (url or "").startswith("data:image"):
+        return await ocr_base64_image(url)
+    b64 = await fetch_image_base64_for_ocr(url)
+    if b64:
+        return await ocr_base64_image(b64)
+    return ""
 
 
 async def _flatten_content_async(
@@ -804,7 +854,7 @@ async def _flatten_content_async(
     # ۱. آرایه‌ی تصاویر مجزا (فقط نوبت جاری)
     if collect_images and include_ocr and is_current_turn and isinstance(images, list):
         for img_url in images:
-            if isinstance(img_url, str) and img_url.startswith("data:image"):
+            if isinstance(img_url, str) and _is_fetchable_image_url(img_url):
                 image_urls.append(img_url)
 
     # ۲. بدنه‌ی چندبخشی (Multipart Payload)
@@ -824,7 +874,7 @@ async def _flatten_content_async(
             elif part_type == "image_url" and collect_images and include_ocr and is_current_turn:
                 url_data = part.get("image_url", {})
                 url = url_data.get("url", "") if isinstance(url_data, dict) else str(url_data)
-                if url.startswith("data:image"):
+                if isinstance(url, str) and _is_fetchable_image_url(url):
                     image_urls.append(url)
 
             elif part_type == "file" and is_current_turn and keep_files:
@@ -966,31 +1016,82 @@ async def _to_openai_messages_async(
 
         out.append({"role": role, "content": content})
 
-    # OCR متمرکز تصاویرِ همین نوبت (مدل متنی است؛ تصویر را مستقیم نمی‌بیند)
+    # OCR متمرکز تصاویرِ همین نوبت (مستقل از keep_files برای متن فایل)
     ocr_image_chars = 0
-    if scope_files_per_turn and ocr_enabled and keep_files and last_user_idx >= 0:
-        new_images = current_turn_images(conversation_id, messages)
-        if new_images:
-            logger.info("📸 OCR on %d new image(s) this turn…", len(new_images))
-            results = await asyncio.gather(
-                *(_ocr_image_url(u) for u in new_images),
-                return_exceptions=True,
+    if scope_files_per_turn and ocr_enabled and last_user_idx >= 0:
+        new_images = current_turn_images(conversation_id, messages, allowed=allowed)
+        all_in_last = _message_image_urls(messages[last_user_idx], allowed or None)
+        if not new_images and all_in_last:
+            logger.warning(
+                "📸 Images in last message (%d) but none marked new for OCR — "
+                "in_last=%d | allowed=%s",
+                len(all_in_last),
+                len(all_in_last),
+                sorted(allowed) if allowed else "none",
             )
-            blocks: list[str] = []
-            for res in results:
-                if isinstance(res, str) and res.strip():
-                    blocks.append(f"[متن استخراج‌شده از تصویر پیوست:\n{res.strip()}]")
-                elif isinstance(res, Exception):
-                    logger.error("❌ OCR task failed: %s", res)
-            if blocks:
-                ocr_text = "\n\n".join(blocks)
-                ocr_image_chars = len(ocr_text)
-                existing = out[last_user_idx]["content"]
-                out[last_user_idx]["content"] = (
-                    f"{ocr_text}\n\n{existing}".strip() if existing.strip() else ocr_text
+            # fallback ریشه‌ای: وقتی delta/caching تصویر جدید را تشخیص نداد
+            # ولی در آخرین پیام تصویر هست، OCR را روی همان تصاویر اجرا کن.
+            new_images = list(all_in_last)
+        elif new_images:
+            logger.info(
+                "📸 Image scan | new_for_ocr=%d | in_last=%d | allowed=%s",
+                len(new_images),
+                len(all_in_last),
+                sorted(allowed) if allowed else "none",
+            )
+        if new_images:
+            existing = out[last_user_idx]["content"]
+            if "[متن استخراج‌شده از تصویر" in existing or "[OCR Context:" in existing:
+                logger.info("📸 Skipping duplicate OCR — text already in last message")
+            else:
+                logger.info("📸 OCR on %d new image(s) this turn…", len(new_images))
+                results = await asyncio.gather(
+                    *(_ocr_image_url(u) for u in new_images),
+                    return_exceptions=True,
                 )
+                blocks: list[str] = []
+                for res in results:
+                    if isinstance(res, str) and res.strip():
+                        blocks.append(f"[متن استخراج‌شده از تصویر پیوست:\n{res.strip()}]")
+                    elif isinstance(res, Exception):
+                        logger.error("❌ OCR task failed: %s", res)
+                if blocks:
+                    ocr_text = "\n\n".join(blocks)
+                    ocr_image_chars = len(ocr_text)
+                    existing = out[last_user_idx]["content"]
+                    if _allowed_mixes_documents_and_images(allowed or set()):
+                        existing = _inject_ocr_after_user_query(existing, ocr_text)
+                    else:
+                        existing = (
+                            f"{ocr_text}\n\n{existing}".strip() if existing.strip() else ocr_text
+                        )
+                    out[last_user_idx]["content"] = existing
+
+    if (
+        ocr_image_chars > 0
+        and scope_files_per_turn
+        and _allowed_mixes_documents_and_images(allowed or set())
+    ):
+        hint = {"role": "system", "content": _OCR_MIXED_ATTACH_HINT}
+        if out and out[0]["role"] == "system":
+            out[0] = {
+                "role": "system",
+                "content": f"{out[0]['content']}\n\n{_OCR_MIXED_ATTACH_HINT}",
+            }
+        else:
+            out.insert(0, hint)
 
     if scope_files_per_turn and last_user_idx >= 0:
+        last_content = out[last_user_idx]["content"]
+        body_summary, source_count = _final_source_body_sizes(last_content)
+
+        raw_last = _raw_to_text(
+            messages[last_user_idx].content
+            if hasattr(messages[last_user_idx], "content")
+            else messages[last_user_idx].get("content", "")
+        )
+        raw_summary, raw_count = _final_source_body_sizes(raw_last)
+
         conv_key = conversation_key(conversation_id, messages) or "none"
         logger.info(
             "📎 Per-turn scope | attach=%s | reason=%s | files=%s | conv_key=%s | merge=%s | content_idx=%d | carrier_idx=%d | ocr_img_chars=%d | last_chars=%d",
@@ -1002,8 +1103,23 @@ async def _to_openai_messages_async(
             content_idx,
             carrier_idx,
             ocr_image_chars,
-            len(out[last_user_idx]["content"]),
+            len(last_content),
         )
+        logger.info(
+            "📎 Sources | raw_in_msg=%d [%s] → kept_for_model=%d [%s]",
+            raw_count, raw_summary, source_count, body_summary,
+        )
+
+        # چند فایل سند همین نوبت → به مدل یادآوری کن همه را بررسی کند
+        if source_count >= 2:
+            if out and out[0]["role"] == "system":
+                if _MULTI_FILE_HINT not in out[0]["content"]:
+                    out[0] = {
+                        "role": "system",
+                        "content": f"{out[0]['content']}\n\n{_MULTI_FILE_HINT}",
+                    }
+            else:
+                out.insert(0, {"role": "system", "content": _MULTI_FILE_HINT})
     return out
 
 

@@ -58,8 +58,12 @@ def _name_matches(source_name: str, source_id: str, allowed: set[str]) -> bool:
     if source_id and source_id in allowed:
         return True
     src = _basename(source_name)
+    if not src:
+        return False
     for a in allowed:
         cand = _basename(a)
+        if not cand:
+            continue
         if src == cand or src.endswith(cand) or cand.endswith(src):
             return True
     return False
@@ -85,7 +89,29 @@ def extract_user_query(text: str) -> str:
     return text.strip()
 
 
-def filter_sources(text: str, allowed_names: set[str]) -> str:
+def _source_tag_is_image(attrs: str, body: str) -> bool:
+    nm = re.search(r"""name=["']([^"']+)["']""", attrs, re.IGNORECASE)
+    typem = re.search(r"""type=["']([^"']+)["']""", attrs, re.IGNORECASE)
+    name = nm.group(1) if nm else ""
+    type_val = (typem.group(1) if typem else "").lower()
+    return (
+        _looks_like_image_name(name)
+        or "image" in type_val
+        or body.strip().startswith("data:image")
+        or _looks_like_base64_image(body)
+    )
+
+
+def _allowed_mixes_documents_and_images(allowed: set[str]) -> bool:
+    """هم فایل سندی و هم منبع تصویری در همین نوبت."""
+    if not allowed:
+        return False
+    has_doc = any(_is_document_name(a) for a in allowed)
+    has_non_doc = any(not _is_document_name(a) for a in allowed)
+    return has_doc and has_non_doc
+
+
+def filter_sources(text: str, allowed_names: set[str], *, strip_image_bodies: bool = False) -> str:
     """
     بلوک‌های <source> را بر اساس نام فایل فیلتر می‌کند.
     allowed_names خالی = حذف کامل context و برگرداندن فقط user_query.
@@ -101,13 +127,16 @@ def filter_sources(text: str, allowed_names: set[str]) -> str:
     def _rebuild_context(match: re.Match) -> str:
         kept: list[str] = []
         for sm in _SOURCE_RE.finditer(match.group(0)):
-            attrs, _body = sm.group(1), sm.group(2)
+            attrs, body = sm.group(1), (sm.group(2) or "")
             name_m = re.search(r"""name=["']([^"']+)["']""", attrs, re.IGNORECASE)
             id_m = re.search(r"""id=["']([^"']+)["']""", attrs, re.IGNORECASE)
             sname = name_m.group(1) if name_m else ""
             sid = id_m.group(1) if id_m else ""
             if _name_matches(sname, sid, allowed_names):
-                kept.append(sm.group(0))
+                if strip_image_bodies and _source_tag_is_image(attrs, body):
+                    kept.append(f"<source{attrs}>[تصویر — متن در بلوک OCR]</source>")
+                else:
+                    kept.append(sm.group(0))
         if kept:
             return "<context>\n" + "\n".join(kept) + "\n</context>"
         return ""
@@ -156,15 +185,19 @@ def _scope_plain_text(
         return text.strip()
 
     if has_markup:
-        effective = allowed_names or all_source_names(text)
+        if not allowed_names:
+            # image-only / حذف source: فقط سؤال — مگر bypass بدون تگ <source>
+            if "<source" in text.lower():
+                return extract_user_query(filter_sources(text, set()))
+            if keep_files and is_current_turn:
+                query_only = extract_user_query(filter_sources(text, set()))
+                if len(text.strip()) > max(len(query_only) + 200, _USER_TEXT_MAX_CHARS):
+                    return text.strip()
+            return extract_user_query(filter_sources(text, set()))
+        effective = allowed_names
         if effective:
-            return filter_sources(text, effective)
-        if keep_files and is_current_turn:
-            query_only = extract_user_query(filter_sources(text, set()))
-            # OpenWebUI bypass: متن PDF/فایل گاهی بدون تگ <source> داخل قالب Task تزریق می‌شود
-            if len(text.strip()) > max(len(query_only) + 200, _USER_TEXT_MAX_CHARS):
-                return text.strip()
-        return extract_user_query(filter_sources(text, set()))
+            # مدل متنی است؛ بدنه‌ی base64 تصویر هیچ‌وقت به مدل نرود (OCR جایگزین آن است)
+            return filter_sources(text, effective, strip_image_bodies=True)
 
     if _looks_like_inline_file(text):
         return text.strip()
@@ -257,18 +290,108 @@ def _get_raw_content(message) -> object:
     return ""
 
 
+_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff", ".tif")
+_DOCUMENT_EXTENSIONS = (
+    ".pdf", ".txt", ".list", ".doc", ".docx", ".md", ".json", ".xml",
+    ".csv", ".ovpn", ".asc", ".pem", ".key", ".crt", ".cer", ".sig",
+    ".xls", ".xlsx", ".ppt", ".pptx", ".html", ".htm", ".yaml", ".yml",
+)
+
+
+def _is_document_name(name: str) -> bool:
+    return _basename(name).lower().endswith(_DOCUMENT_EXTENSIONS)
+
+
+def _looks_like_image_name(name: str) -> bool:
+    return _basename(name).lower().endswith(_IMAGE_EXTENSIONS)
+
+
+def _looks_like_base64_image(body: str) -> bool:
+    sample = re.sub(r"\s+", "", (body or "")[:300])
+    return len(sample) > 80 and bool(re.match(r"^[A-Za-z0-9+/=]+$", sample))
+
+
+def _is_fetchable_image_url(url: str) -> bool:
+    """URL تصویری قابل واکشی (data-URL یا HTTP/مسیر فایل OWUI)."""
+    u = (url or "").strip()
+    if u.startswith("data:image"):
+        return True
+    if u.startswith("/api/") or "/files/" in u:
+        return True
+    if u.startswith(("http://", "https://")):
+        lower = u.lower().split("?", 1)[0]
+        if lower.endswith(_IMAGE_EXTENSIONS):
+            return True
+        if "/files/" in lower or "/image" in lower:
+            return True
+    return False
+
+
+def _image_urls_from_source_text(
+    text: str,
+    allowed_sources: set[str] | None = None,
+) -> list[str]:
+    """تصاویر داخل بلوک‌های <source> — حالت bypass OpenWebUI همراه PDF."""
+    if not text or "<source" not in text.lower():
+        return []
+    urls: list[str] = []
+    for sm in _SOURCE_RE.finditer(text):
+        attrs, body = sm.group(1), (sm.group(2) or "").strip()
+        nm = re.search(r"""name=["']([^"']+)["']""", attrs, re.IGNORECASE)
+        idm = re.search(r"""id=["']([^"']+)["']""", attrs, re.IGNORECASE)
+        typem = re.search(r"""type=["']([^"']+)["']""", attrs, re.IGNORECASE)
+        name = nm.group(1) if nm else ""
+        sid = idm.group(1).strip() if idm else ""
+        type_val = (typem.group(1) if typem else "").lower()
+
+        in_allowed = bool(allowed_sources and _name_matches(name, sid, allowed_sources))
+        is_document = _is_document_name(name) or body.lstrip().startswith("%PDF")
+
+        is_image = (
+            _looks_like_image_name(name)
+            or "image" in type_val
+            or body.startswith("data:image")
+            or (in_allowed and not is_document)
+            or (_looks_like_base64_image(body) and not is_document)
+        )
+        if not is_image:
+            continue
+        if body.startswith("data:image"):
+            urls.append(body)
+            continue
+        if _looks_like_base64_image(body):
+            b64 = re.sub(r"\s+", "", body)
+            urls.append(f"data:image/jpeg;base64,{b64}")
+            continue
+        srcm = re.search(r"""(?:src|url)=["']([^"']+)["']""", attrs, re.IGNORECASE)
+        if srcm and _is_fetchable_image_url(srcm.group(1)):
+            urls.append(srcm.group(1).strip())
+            continue
+        fidm = re.search(r"""file[_-]?id=["']([^"']+)["']""", attrs, re.IGNORECASE)
+        if fidm and not body:
+            urls.append(f"owui-file://{fidm.group(1).strip()}")
+    return urls
+
+
 def _message_has_images(message) -> bool:
     return len(_message_image_urls(message)) > 0
 
 
-def _message_image_urls(message) -> list[str]:
+def _message_image_urls(message, allowed_sources: set[str] | None = None) -> list[str]:
     """
-    همه‌ی data-URL تصاویر یک پیام را برمی‌گرداند.
-    OpenWebUI تصویر را به دو شکل می‌فرستد:
+    همه‌ی URL تصاویر یک پیام را برمی‌گرداند.
+    OpenWebUI تصویر را به چند شکل می‌فرستد:
       ۱) فیلد `images: [...]`
-      ۲) آرایه‌ی content با partهای {"type":"image_url", "image_url":{"url":"data:image..."}}
+      ۲) آرایه‌ی content با partهای {"type":"image_url", ...}
+      ۳) بلوک <source name="photo.png"> داخل قالب bypass (همراه PDF)
     """
     urls: list[str] = []
+    seen: set[str] = set()
+
+    def _add(url: str) -> None:
+        if url and _is_fetchable_image_url(url) and url not in seen:
+            seen.add(url)
+            urls.append(url)
 
     if hasattr(message, "images"):
         images = message.images
@@ -278,8 +401,8 @@ def _message_image_urls(message) -> list[str]:
         images = []
     if isinstance(images, list):
         for img in images:
-            if isinstance(img, str) and img.startswith("data:image"):
-                urls.append(img)
+            if isinstance(img, str):
+                _add(img)
 
     raw = _get_raw_content(message)
     if isinstance(raw, list):
@@ -289,13 +412,23 @@ def _message_image_urls(message) -> list[str]:
             if part.get("type") == "image_url":
                 url_data = part.get("image_url", {})
                 url = url_data.get("url", "") if isinstance(url_data, dict) else str(url_data)
-                if isinstance(url, str) and url.startswith("data:image"):
-                    urls.append(url)
+                if isinstance(url, str):
+                    _add(url)
+        text_blob = _raw_to_text(raw)
+        for url in _image_urls_from_source_text(text_blob, allowed_sources):
+            _add(url)
+    elif isinstance(raw, str):
+        for url in _image_urls_from_source_text(raw, allowed_sources):
+            _add(url)
+
     return urls
 
 
 def _image_fingerprint(url: str) -> str:
-    body = url.split(",", 1)[1] if "," in url else url
+    if (url or "").startswith("data:image"):
+        body = url.split(",", 1)[1] if "," in url else url
+    else:
+        body = url.strip()
     return "img:" + hashlib.md5(body.encode("utf-8", errors="ignore")).hexdigest()
 
 
@@ -486,22 +619,69 @@ def sources_delta_for_conversation(conversation_id, messages) -> set[str]:
     return {a for a in attachments_delta_for_conversation(conversation_id, messages) if not a.startswith("img:")}
 
 
-def current_turn_images(conversation_id, messages) -> list[str]:
-    """data-URL تصاویری که در این نوبت تازه attach شده‌اند — برای OCR."""
-    delta = attachments_delta_for_conversation(conversation_id, messages)
-    new_fps = {a for a in delta if a.startswith("img:")}
-    if not new_fps:
+def _scan_indices_for_images(messages, last_idx: int, allowed: set[str] | None) -> set[int]:
+    """پیام‌هایی که ممکن است تصویر جدید این نوبت داشته باشند."""
+    indices = {last_idx}
+    if allowed:
+        cidx = find_file_content_index(messages, last_idx, allowed)
+        if cidx >= 0:
+            indices.add(cidx)
+    carrier = find_turn_carrier_for_merge(messages, last_idx)
+    if carrier >= 0:
+        indices.add(carrier)
+    return indices
+
+
+def current_turn_images(
+    conversation_id,
+    messages,
+    allowed: set[str] | None = None,
+) -> list[str]:
+    """
+    تصاویرِ همین نوبت برای OCR.
+
+    اصل تعیین‌کننده (طبق رفتار OpenWebUI): تصاویر هیچ‌وقت ذخیره نمی‌شوند و فقط
+    inline داخل پرامپت همین درخواست می‌آیند. پس تشخیص قطعی است و به کش Redis
+    وابسته نیست:
+      - همه‌ی تصاویرِ «آخرین پیام user» (و پیام حاملِ همین نوبت) گرفته می‌شوند
+      - تصاویری که در پیام‌های user قبلیِ همین درخواست هم بوده‌اند حذف می‌شوند
+        (محافظت در برابر تکرار درون یک درخواست)
+    """
+    last_idx = _last_user_index(messages)
+    if last_idx < 0:
         return []
+
+    # پیام‌های نوبت جاری: آخرین پیام + پیام حامل/محتوای فایل همین نوبت
+    turn_indices = {last_idx}
+    carrier = find_turn_carrier_for_merge(messages, last_idx)
+    if carrier >= 0:
+        turn_indices.add(carrier)
+    if allowed:
+        cidx = find_file_content_index(messages, last_idx, allowed)
+        if cidx >= 0:
+            turn_indices.add(cidx)
+
+    # اثرانگشت تصاویری که در پیام‌های user «قبل از» نوبت جاری بوده‌اند
+    earliest_turn_idx = min(turn_indices)
+    before_fps: set[str] = set()
+    for i in range(earliest_turn_idx):
+        if _message_role(messages[i]) != "user":
+            continue
+        before_fps |= _message_image_fingerprints(messages[i])
+
+    # hint برای پیدا کردن تصاویری که فقط با id در allowed مشخص شده‌اند
+    img_hint = {a for a in (allowed or set()) if a and not _is_document_name(a)} or None
+
     seen: set[str] = set()
     result: list[str] = []
-    for m in messages:
-        if _message_role(m) != "user":
-            continue
-        for url in _message_image_urls(m):
+    for idx in sorted(turn_indices):
+        for url in _message_image_urls(messages[idx], img_hint):
             fp = _image_fingerprint(url)
-            if fp in new_fps and fp not in seen:
-                seen.add(fp)
-                result.append(url)
+            if fp in before_fps or fp in seen:
+                continue
+            seen.add(fp)
+            result.append(url)
+
     return result
 
 
@@ -655,6 +835,30 @@ def find_file_content_index(messages, last_idx: int, allowed: set[str]) -> int:
     return best
 
 
+def _image_only_allowed(fresh_sources: set[str]) -> set[str]:
+    """از fresh_sources فقط شناسه/نام غیرسندی (معمولاً عکس) را نگه می‌دارد."""
+    return {s for s in fresh_sources if s and not _is_document_name(s)}
+
+
+def _is_image_focused_query(text: str) -> bool:
+    q = (extract_user_query(text) or text or "").lower()
+    if not q:
+        return False
+    hints = (
+        "عکس",
+        "تصویر",
+        "متن عکس",
+        "متن تصویر",
+        "روی عکس",
+        "داخل عکس",
+        "ocr",
+        "image",
+        "photo",
+        "screenshot",
+    )
+    return any(h in q for h in hints)
+
+
 def resolve_turn_file_scope(files, messages, conversation_id=None) -> tuple[bool, set[str], str]:
     """
     (keep_files, allowed_names, reason) برای همین نوبت.
@@ -679,6 +883,33 @@ def resolve_turn_file_scope(files, messages, conversation_id=None) -> tuple[bool
         sources_in_history = _sources_before_index(messages, last_idx)
         fresh_in_last = last_sources - sources_in_history
         if fresh_in_last:
+            # وقتی پرسش عکس‌محور است و OWUI کل context قبلی را دوباره می‌فرستد،
+            # اجازه نده PDF/متن قدیمی روی OCR سوار شود.
+            if _is_image_focused_query(last_text):
+                image_only = _image_only_allowed(fresh_in_last)
+                if image_only:
+                    return True, image_only, "last-msg-image-focused"
+
+            full_delta = attachments_delta_for_conversation(conversation_id, messages)
+            new_image_fps = {a for a in full_delta if a.startswith("img:")}
+            text_delta = full_delta - new_image_fps - {a for a in full_delta if a.startswith("file:")}
+            delta_names = _allowed_names_from_delta(text_delta)
+
+            # فقط عکس جدید — PDF/asc قدیمی که OWUI دوباره فرستاده نرود
+            if new_image_fps and not text_delta:
+                img_allowed = _image_only_allowed(fresh_in_last)
+                return True, img_allowed, f"new-images:{len(new_image_fps)}"
+
+            if full_delta:
+                if delta_names:
+                    narrowed = fresh_in_last & delta_names
+                    if narrowed:
+                        return True, narrowed, "last-msg-fresh+delta"
+                    return True, delta_names, f"conv-delta:{sorted(text_delta)}"
+                if new_image_fps:
+                    img_allowed = _image_only_allowed(fresh_in_last)
+                    return True, img_allowed, f"new-images:{len(new_image_fps)}"
+
             return True, fresh_in_last, "last-msg-fresh-source"
     elif user_count > 1 and _looks_like_inline_file(last_text):
         last_fp = _inline_fingerprint(last_text)

@@ -244,6 +244,47 @@ async def resolve_openwebui_file_refs(
     return new_refs
 
 
+async def fetch_image_base64_for_ocr(url: str) -> str:
+    """واکشی تصویر از data-URL، HTTP یا OpenWebUI file id و برگرداندن base64 خام."""
+    import base64
+
+    u = (url or "").strip()
+    if not u:
+        return ""
+    if u.startswith("owui-file://"):
+        file_id = u[len("owui-file://"):]
+        text = await fetch_openwebui_file_text(file_id)
+        if not text:
+            return ""
+        if text.startswith("data:image") and "," in text:
+            return text.split(",", 1)[1]
+        return base64.b64encode(text.encode("utf-8")).decode("ascii")
+    if u.startswith("data:image"):
+        return u.split(",", 1)[1] if "," in u else ""
+
+    if u.startswith("/"):
+        base = (settings.OPENWEBUI_BASE_URL or "").rstrip("/")
+        if base:
+            u = f"{base}{u}"
+
+    headers: dict[str, str] = {}
+    token = (settings.OPENWEBUI_API_KEY or "").strip()
+    if token and (settings.OPENWEBUI_BASE_URL or "") in u:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
+            resp = await client.get(u, headers=headers)
+            resp.raise_for_status()
+            raw = resp.content
+            if not raw:
+                return ""
+            return base64.b64encode(raw).decode("ascii")
+    except Exception as exc:
+        logger.warning("⚠️  Image fetch for OCR failed (%s): %s", u[:80], exc)
+        return ""
+
+
 async def fetch_openwebui_file_text(file_id: str) -> str:
     base = (settings.OPENWEBUI_BASE_URL or "").rstrip("/")
     token = (settings.OPENWEBUI_API_KEY or "").strip()
