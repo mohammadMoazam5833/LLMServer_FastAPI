@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     # آدرس میکروسرویس تک‌ورکره OCR
     OCR_SERVICE_URL :str = "http://127.0.0.1:8010/api/v1/ocr"
 
+    # ── Load testing (dev only) ───────────────────────────────────────────────
+    # وقتی true باشد enforce_rate_limit هیچ سقفی اعمال نمی‌کند (فقط برای Locust/k6)
+    LOAD_TEST_DISABLE_RATE_LIMIT: bool = False
+
 @lru_cache
 def get_settings() -> Settings:
     return Settings()

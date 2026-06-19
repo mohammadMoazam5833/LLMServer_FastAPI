@@ -1,0 +1,25 @@
+sequenceDiagram
+    participant Uvicorn
+    participant App as FastAPI App
+    participant PG as PostgreSQL
+    participant BG as Background Task
+
+    Note over Uvicorn,BG: STARTUP
+    Uvicorn->>App: start lifespan
+    App->>App: Redis ping health check
+    alt AUTO_CREATE_TABLES=true
+        App->>PG: Base.metadata.create_all
+    end
+    App->>BG: create_task chain_cleanup_loop every 600s
+
+    Note over Uvicorn,BG: RUNNING
+    loop every 10 minutes
+        BG->>BG: ChainManager.cleanup idle chains
+    end
+
+    Note over Uvicorn,BG: SHUTDOWN
+    Uvicorn->>App: shutdown signal
+    App->>BG: cancel cleanup task
+    App->>App: GeneratorFactory.close_all
+    App->>App: close rate_limit + redis clients
+    App->>PG: engine.dispose

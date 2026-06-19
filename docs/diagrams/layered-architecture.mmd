@@ -1,0 +1,75 @@
+flowchart TB
+    subgraph clients [Clients]
+        UI[Internal Frontend\nJWT Auth]
+        WebUI[Open WebUI\nAPI Key]
+        Cline[Cline Code Bot\nAPI Key]
+    end
+
+    subgraph gateway [FastAPI Gateway — default port 8000]
+        CORS[CORS Middleware]
+        subgraph routes [Routers]
+            R1["/api/v1/auth\nno auth"]
+            R2["/api/v1/*\nJWT Bearer"]
+            R3["/v1/*\nAPI Key OpenAI-compat"]
+            R4["/code_bot/v1/*\nAPI Key proxy"]
+        end
+        subgraph deps [Dependencies]
+            D1[get_current_user\nJWT decode]
+            D2[require_api_key\nSHA-256 + rate limit]
+        end
+    end
+
+    subgraph services [Services Layer]
+        SVC1[chat_completion_service]
+        SVC2[chat_service]
+        SVC3[rag_service]
+        SVC4[model_service]
+        SVC5[openwebui_content\nper-turn file scoping]
+        SVC6[openwebui_files\nOWUI file bridge]
+        SVC7[embedding_service]
+        SVC8[token_utils]
+        SVC9[openwebui_tasks]
+    end
+
+    subgraph runtime [Runtime Layer]
+        subgraph chain [LangChain — internal path]
+            CM[ChainManager\nTTL cache]
+            CH[chain.py LCEL]
+            MEM[memory.py Redis k=4]
+            MW[model_wrapper.py]
+        end
+        PM[provider_manager]
+        GF[generator_factory\nhttpx pool]
+        VG[vllm_http_generator]
+    end
+
+    subgraph external [External Services]
+        PG[(PostgreSQL)]
+        RD[(Redis\nmemory + rate limit + attach cache)]
+        VLLM[vLLM :8003]
+        OCR[OCR Microservice :8010]
+        OWUI[OpenWebUI File API :3000]
+        FS[Local FS\nRAG uploads]
+    end
+
+    clients --> CORS --> routes
+    R1 --> D1
+    R2 --> D1 --> SVC1
+    R3 --> D2 --> SVC1
+    R4 --> D2 --> VLLM
+
+    SVC1 --> SVC2
+    SVC1 --> SVC3
+    SVC1 --> SVC5
+    SVC1 --> SVC6
+    SVC1 --> SVC9
+    SVC3 --> SVC7
+    SVC3 --> PG
+    SVC3 --> OCR
+    SVC3 --> FS
+    SVC6 --> OWUI
+
+    SVC2 --> CH --> MEM --> RD
+    SVC2 --> PG
+    SVC1 --> PM --> GF --> VG --> VLLM
+    SVC2 --> CM --> CH --> MW --> PM

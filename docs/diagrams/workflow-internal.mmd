@@ -1,0 +1,49 @@
+sequenceDiagram
+    participant Client
+    participant Router as /api/v1/chat
+    participant Auth as JWT Auth
+    participant CCS as chat_completion_service
+    participant RAG as rag_service
+    participant CS as chat_service
+    participant CM as ChainManager
+    participant LC as LangChain LCEL
+    participant Redis
+    participant PG as PostgreSQL
+    participant VG as vllm_http_generator
+    participant VLLM as vLLM :8003
+
+    Client->>Router: POST {messages, model, conversation_id?}
+    Router->>Auth: validate Bearer token
+    Auth-->>Router: User object
+    Router->>CCS: create_chat_completion() or stream
+
+    CCS->>CCS: is_openwebui_internal_task?
+    alt OpenWebUI internal task
+        CCS->>VG: direct call skip RAG+DB
+        VG->>VLLM: POST /chat/completions
+        VLLM-->>VG: response
+        VG-->>CCS: text
+        CCS-->>Client: JSON or SSE
+    else Normal chat
+        CCS->>RAG: retrieve_context(query, file_ids)
+        RAG->>PG: semantic search on rag_chunk metadata
+        RAG-->>CCS: context_text capped
+
+        CCS->>PG: get or create Conversation
+        CCS->>CS: chat(conversation, messages, context)
+        CS->>PG: INSERT Message user
+        CS->>CM: get_chain(conversation_id)
+        CM-->>CS: LCEL chain cached or new
+        CS->>LC: chain.ainvoke(input)
+        LC->>Redis: load last 4 turns
+        Redis-->>LC: history
+        LC->>VG: generate(messages + history + RAG)
+        VG->>VLLM: POST /v1/chat/completions
+        VLLM-->>VG: {text, usage}
+        VG-->>LC: response
+        LC->>Redis: save turn
+        LC-->>CS: assistant message
+        CS->>PG: INSERT Message assistant
+        CS-->>CCS: response + conversation_id
+        CCS-->>Client: JSON {message, conversation_id, usage}
+    end

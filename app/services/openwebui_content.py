@@ -186,13 +186,11 @@ def _scope_plain_text(
 
     if has_markup:
         if not allowed_names:
-            # image-only / حذف source: فقط سؤال — مگر bypass بدون تگ <source>
+            # allowed خالی + keep_files یعنی «بدون فیلتر نام» (inline-file از OWUI)، نه حذف فایل
+            if keep_files and is_current_turn:
+                return text.strip()
             if "<source" in text.lower():
                 return extract_user_query(filter_sources(text, set()))
-            if keep_files and is_current_turn:
-                query_only = extract_user_query(filter_sources(text, set()))
-                if len(text.strip()) > max(len(query_only) + 200, _USER_TEXT_MAX_CHARS):
-                    return text.strip()
             return extract_user_query(filter_sources(text, set()))
         effective = allowed_names
         if effective:

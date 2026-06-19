@@ -1,0 +1,53 @@
+sequenceDiagram
+    participant WebUI as OpenWebUI
+    participant Router as /v1/chat
+    participant Auth as API Key + rate limit
+    participant OWF as openwebui_files
+    participant OWC as openwebui_content
+    participant CCS as chat_completion_service
+    participant RAG as rag_service
+    participant OCR as OCR :8010
+    participant VG as vllm_http_generator
+    participant VLLM as vLLM :8003
+
+    WebUI->>Router: POST full history + files
+    Router->>Auth: X-API-Key SHA-256 lookup
+    Auth-->>Router: User
+
+    Router->>OWF: enrich_request_from_openwebui
+    OWF-->>Router: body with inline file content
+
+    CCS->>OWC: resolve_turn_file_scope
+    OWC-->>CCS: keep_files, allowed, reason
+
+    CCS->>CCS: scope_message_content + filter_sources
+    Note over CCS: strip image base64 from model input
+
+    alt Images this turn
+        CCS->>OWC: current_turn_images
+        CCS->>OCR: POST image base64
+        OCR-->>CCS: extracted text
+        CCS->>CCS: inject OCR after user_query
+    end
+
+    alt files / RAG UUIDs
+        CCS->>RAG: retrieve_context
+        RAG-->>CCS: semantic chunks
+        CCS->>CCS: inject into system prompt
+    end
+
+    CCS->>CCS: trim to CHAT_MAX_CONTEXT_TOKENS
+
+    alt stream=false
+        CCS->>VG: generate()
+        VG->>VLLM: POST
+        VLLM-->>VG: JSON
+        VG-->>CCS: text + usage
+        CCS-->>WebUI: JSON
+    else stream=true
+        CCS->>VG: generate_stream()
+        VG->>VLLM: POST stream=true
+        VLLM-->>VG: SSE chunks
+        VG-->>CCS: AsyncIterator
+        CCS-->>WebUI: EventSourceResponse
+    end

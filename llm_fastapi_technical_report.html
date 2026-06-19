@@ -1,0 +1,1110 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>گزارش فنی پروژه llm_fastapi</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.0/mermaid.min.js"></script>
+<style>
+  :root {
+    --primary: #1a3a5c;
+    --accent: #2e7d9f;
+    --accent2: #3dab7a;
+    --bg: #f5f7fa;
+    --card: #ffffff;
+    --text: #1e2a35;
+    --muted: #5a6a78;
+    --border: #d0dce8;
+    --tag-bg: #e8f4fb;
+    --tag-text: #1a5f80;
+    --warn: #b35c00;
+    --warn-bg: #fff4e5;
+    --success-bg: #edfaf3;
+    --success: #1a7a4a;
+    --radius: 10px;
+    --shadow: 0 2px 12px rgba(0,0,0,0.08);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', Tahoma, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.8;
+    font-size: 15px;
+  }
+
+  /* Cover */
+  .cover {
+    background: linear-gradient(135deg, #0d2b45 0%, #1a5575 60%, #2e8fb5 100%);
+    color: #fff;
+    padding: 70px 60px 60px;
+    position: relative;
+    overflow: hidden;
+  }
+  .cover::before {
+    content: '';
+    position: absolute;
+    top: -80px; left: -80px;
+    width: 400px; height: 400px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.04);
+  }
+  .cover::after {
+    content: '';
+    position: absolute;
+    bottom: -60px; right: -40px;
+    width: 300px; height: 300px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.05);
+  }
+  .cover-badge {
+    display: inline-block;
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 20px;
+    padding: 4px 14px;
+    font-size: 12px;
+    letter-spacing: 1px;
+    margin-bottom: 20px;
+    text-transform: uppercase;
+  }
+  .cover h1 {
+    font-size: 2.6em;
+    font-weight: 700;
+    margin-bottom: 12px;
+    position: relative; z-index:1;
+  }
+  .cover h1 span { color: #7dd3f5; }
+  .cover-sub {
+    font-size: 1.15em;
+    opacity: 0.82;
+    max-width: 620px;
+    margin-bottom: 36px;
+    position: relative; z-index:1;
+  }
+  .cover-meta {
+    display: flex;
+    gap: 30px;
+    flex-wrap: wrap;
+    position: relative; z-index:1;
+  }
+  .cover-meta-item { font-size: 13px; opacity: 0.75; }
+  .cover-meta-item strong { color: #7dd3f5; font-size: 14px; display: block; }
+
+  /* Layout */
+  .container {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 40px 30px 80px;
+  }
+
+  /* TOC */
+  .toc {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-right: 4px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 24px 28px;
+    margin-bottom: 40px;
+    box-shadow: var(--shadow);
+  }
+  .toc h2 { font-size: 1em; color: var(--muted); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
+  .toc ol { padding-right: 18px; }
+  .toc li { margin: 5px 0; }
+  .toc a { color: var(--accent); text-decoration: none; font-weight: 500; }
+  .toc a:hover { text-decoration: underline; }
+
+  /* Sections */
+  section { margin-bottom: 52px; }
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 22px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid var(--border);
+  }
+  .section-num {
+    background: var(--primary);
+    color: #fff;
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 0.9em;
+    flex-shrink: 0;
+  }
+  .section-header h2 {
+    font-size: 1.45em;
+    color: var(--primary);
+    font-weight: 700;
+  }
+
+  /* Cards */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px 28px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow);
+  }
+  .card h3 {
+    font-size: 1.05em;
+    color: var(--accent);
+    margin-bottom: 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  /* Architecture box */
+  .arch-box {
+    background: #0d2236;
+    border-radius: var(--radius);
+    padding: 24px 28px;
+    color: #a8d8ea;
+    font-family: 'Courier New', monospace;
+    font-size: 13.5px;
+    line-height: 1.7;
+    margin-bottom: 20px;
+    overflow-x: auto;
+    direction: ltr;
+    text-align: left;
+  }
+
+  /* Mermaid */
+  .diagram-wrap {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px 20px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow);
+    overflow-x: auto;
+    text-align: center;
+  }
+  .diagram-wrap .diagram-title {
+    font-size: 0.85em;
+    color: var(--muted);
+    margin-bottom: 16px;
+    font-weight: 600;
+    text-align: right;
+    padding-right: 8px;
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0;
+    font-size: 14px;
+  }
+  th {
+    background: var(--primary);
+    color: #fff;
+    padding: 10px 14px;
+    font-weight: 600;
+    text-align: right;
+  }
+  td { padding: 9px 14px; border-bottom: 1px solid var(--border); }
+  tr:nth-child(even) td { background: #f0f5fa; }
+  tr:hover td { background: #e4f0f8; }
+
+  /* Tags / badges */
+  .tag {
+    display: inline-block;
+    background: var(--tag-bg);
+    color: var(--tag-text);
+    border-radius: 12px;
+    padding: 2px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    margin: 2px;
+  }
+  .tag-green { background: var(--success-bg); color: var(--success); }
+  .tag-warn { background: var(--warn-bg); color: var(--warn); }
+  .tag-gray { background: #eef0f2; color: #4a5568; }
+
+  /* Stats row */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .stat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+    box-shadow: var(--shadow);
+    text-align: center;
+  }
+  .stat-num { font-size: 2.2em; font-weight: 800; color: var(--accent); }
+  .stat-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  /* Grid 2-col */
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 700px) { .grid2 { grid-template-columns: 1fr; } }
+
+  /* Warn box */
+  .warn-box {
+    background: var(--warn-bg);
+    border-right: 4px solid #e07b00;
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 12px 0;
+    font-size: 14px;
+    color: var(--warn);
+  }
+  .success-box {
+    background: var(--success-bg);
+    border-right: 4px solid #2e9e6a;
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 12px 0;
+    font-size: 14px;
+    color: var(--success);
+  }
+
+  /* Code inline */
+  code {
+    background: #e8f0f7;
+    color: #1a3d5c;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+  }
+  pre {
+    background: #0d2236;
+    color: #a8d8ea;
+    border-radius: 8px;
+    padding: 16px 20px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.7;
+    margin: 12px 0;
+    direction: ltr;
+    text-align: left;
+  }
+
+  /* Flow path labels */
+  .path-row {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+    margin: 10px 0;
+    flex-wrap: wrap;
+  }
+  .path-label {
+    background: var(--primary);
+    color: #fff;
+    border-radius: 6px;
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+    flex-shrink: 0;
+    margin-top: 3px;
+  }
+
+  /* Footer */
+  footer {
+    background: var(--primary);
+    color: rgba(255,255,255,0.65);
+    text-align: center;
+    padding: 24px;
+    font-size: 13px;
+    margin-top: 60px;
+  }
+</style>
+
+<style id="mermaid-layout-fix">
+.diagram-wrap{
+  display:block !important;
+  clear:both !important;
+}
+.diagram-wrap .mermaid{
+  display:block !important;
+  width:100% !important;
+  overflow-x:auto !important;
+  margin:20px auto !important;
+  text-align:center !important;
+  direction: ltr !important; /* Force diagrams to evaluate in LTR layout */
+}
+.diagram-wrap svg {
+  max-width:100% !important;
+  height:auto !important;
+  display:block !important;
+  margin:0 auto !important;
+}
+.card, section{
+  clear:both !important;
+}
+</style>
+
+</head>
+<body>
+
+<div class="cover">
+  <div class="cover-badge">گزارش فنی داخلی</div>
+  <h1><span>llm_fastapi</span> — Gateway چت و RAG</h1>
+  <p class="cover-sub">
+    یک API Gateway ناهمزمان مبتنی بر FastAPI برای یکپارچه‌سازی مدل‌های زبانی بزرگ، جستجوی معنایی (RAG)، و پشتیبانی از OpenWebUI با مدیریت فایل per-turn
+  </p>
+  <div class="cover-meta">
+    <div class="cover-meta-item"><strong>نسخه</strong> 1.1 — ژوئن ۲۰۲۶</div>
+    <div class="cover-meta-item"><strong>مدل inference</strong> Qwen3-Coder-30B / vLLM</div>
+    <div class="cover-meta-item"><strong>پورت Gateway</strong> 8000 (dev) / 8001 (deploy)</div>
+    <div class="cover-meta-item"><strong>وضعیت</strong> ۹۶ تست واحد سبز ✓</div>
+    <div class="cover-meta-item"><strong>مخاطب</strong> ارائه داخلی شرکت</div>
+  </div>
+</div>
+
+<div class="container">
+
+  <div class="stats-row" style="margin-top:32px;">
+    <div class="stat-card">
+      <div class="stat-num">4</div>
+      <div class="stat-label">مسیر API مجزا</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num">96</div>
+      <div class="stat-label">تست واحد</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num">6</div>
+      <div class="stat-label">سرویس خارجی</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num">30B</div>
+      <div class="stat-label">پارامتر مدل</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-num">65K</div>
+      <div class="stat-label">حداکثر توکن context</div>
+    </div>
+  </div>
+
+  <div class="toc">
+    <h2>فهرست مطالب</h2>
+    <ol>
+      <li><a href="#s1">خلاصه اجرایی</a></li>
+      <li><a href="#s2">معماری لایه‌بندی شده</a></li>
+      <li><a href="#s3">مسیرهای API و احراز هویت</a></li>
+      <li><a href="#s4">جریان‌های کاری — چهار مسیر اصلی</a></li>
+      <li><a href="#s5">چرخه عمر برنامه</a></li>
+      <li><a href="#s6">مدل داده (ERD)</a></li>
+      <li><a href="#s7">بهبودهای vLLM HTTP Client</a></li>
+      <li><a href="#s8">Stack فناوری</a></li>
+      <li><a href="#s9">نقاط قوت، بدهی فنی و رفع مشکلات</a></li>
+      <li><a href="#s10">متغیرهای محیطی و راه‌اندازی</a></li>
+      <li><a href="#s11">گزارش‌های حادثه (Locust و PDF)</a></li>
+    </ol>
+  </div>
+
+  <section id="s1">
+    <div class="section-header">
+      <div class="section-num">۱</div>
+      <h2>خلاصه اجرایی</h2>
+    </div>
+
+    <div class="card">
+      <p>
+        <strong>llm_fastapi</strong> یک <strong>Gateway ناهمزمان</strong> مبتنی بر FastAPI است که بین کلاینت‌ها
+        (OpenWebUI، Cline، فرانت‌اند داخلی) و سرور inference محلی (vLLM با مدل Qwen3-Coder-30B) قرار می‌گیرد.
+        این پروژه از یک monolith Django مهاجرت کرده و ردپای آن در نام جداول پایگاه داده باقی است.
+      </p>
+    </div>
+<div class="arch-box" style="direction: ltr; text-align: left; font-family: monospace; white-space: pre; background: #0d2236; color: #a8d8ea; padding: 20px; border-radius: 8px; overflow-x: auto;">
+┌─────────────┐     ┌──────────────────┐     ┌─────────┐
+│ OpenWebUI   │────►│  llm_fastapi     │────►│  vLLM   │
+│ Cline       │     │  :8000 / :8001   │     │  :8003  │
+│ Frontend    │     └────────┬─────────┘     └─────────┘
+└─────────────┘              │
+              ┌──────────────┼──────────────┐
+              ▼              ▼              ▼
+         PostgreSQL       Redis        OCR :8010
+</div>
+
+    <div class="grid2">
+      <div class="card">
+        <h3>قابلیت‌های اصلی</h3>
+        <ul style="padding-right:18px;line-height:2.1;">
+          <li>API سازگار با OpenAI برای OpenWebUI</li>
+          <li>RAG با embedding معنایی (فارسی + انگلیسی)</li>
+          <li>مدیریت فایل per-turn برای OpenWebUI</li>
+          <li>OCR تصاویر via microservice</li>
+          <li>احراز هویت JWT + API Key + rate limit/quota</li>
+          <li>استریم SSE برای چت بلادرنگ و پرسرعت</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>فناوری‌های کلیدی</h3>
+        <div style="margin-top:8px;">
+          <span class="tag">FastAPI</span>
+          <span class="tag">SQLAlchemy 2.0</span>
+          <span class="tag">LangChain LCEL</span>
+          <span class="tag">vLLM</span>
+          <span class="tag">Redis</span>
+          <span class="tag">PostgreSQL</span>
+          <span class="tag">sentence-transformers</span>
+          <span class="tag">httpx async</span>
+          <span class="tag">easyocr</span>
+          <span class="tag">pypdf</span>
+          <span class="tag">Uvicorn ASGI</span>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px;">
+      <h3>ساختار پوشه‌های کلیدی</h3>
+      <pre>app/
+├── main.py, config.py, database.py
+├── api/          auth, internal, openai, code_bot
+├── services/     chat_completion, openwebui_*, rag_*
+├── runtime/      vllm_http_generator, generator_factory
+├── langchain_integration/
+├── models/       user, api_key, llm (ORM)
+docs/             ARCHITECTURE.md, LOAD_TESTING.md, reports/
+tests/            pytest (96 test)</pre>
+    </div>
+  </section>
+
+  <section id="s2">
+    <div class="section-header">
+      <div class="section-num">۲</div>
+      <h2>معماری لایه‌بندی شده</h2>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <p>معماری شامل چهار لایه اصلی است: <strong>کلاینت‌ها</strong>، <strong>Gateway (FastAPI)</strong>، <strong>لایه سرویس‌ها</strong> و <strong>لایه Runtime</strong>. هر لایه مسئولیت مجزایی دارد و وابستگی‌ها به صورت یک‌طرفه از بالا به پایین جاری می‌شوند.</p>
+    </div>
+
+    <div class="diagram-wrap">
+      <div class="diagram-title">نمودار ۱ — معماری لایه‌بندی شده سیستم</div>
+      <div class="mermaid">
+flowchart TB
+    subgraph clients ["کلاینت‌ها"]
+        UI["Frontend داخلی\nJWT Auth"]
+        WebUI["Open WebUI\nAPI Key"]
+        Cline["Cline Code Bot\nAPI Key"]
+    end
+
+    subgraph gateway ["FastAPI Gateway — پورت 8000 / 8001"]
+        CORS["CORS Middleware"]
+        subgraph routes ["Routers"]
+            R1["/api/v1/auth"]
+            R2["/api/v1/*\nJWT Bearer"]
+            R3["/v1/*\nAPI Key OpenAI-compat"]
+            R4["/code_bot/v1/*\nAPI Key proxy"]
+        end
+        subgraph deps ["Dependencies"]
+            D1["get_current_user\nJWT decode"]
+            D2["require_api_key\nSHA-256 + rate limit"]
+        end
+    end
+
+    subgraph services ["لایه سرویس‌ها"]
+        SVC1["chat_completion_service"]
+        SVC2["chat_service"]
+        SVC3["rag_service"]
+        SVC4["model_service"]
+        SVC5["openwebui_content\nper-turn file scoping"]
+        SVC6["openwebui_files\nOWUI file bridge"]
+        SVC7["embedding_service"]
+        SVC8["token_utils"]
+        SVC9["openwebui_tasks"]
+    end
+
+    subgraph runtime ["لایه Runtime"]
+        subgraph chain ["LangChain — مسیر داخلی"]
+            CM["ChainManager\nTTL cache"]
+            CH["chain.py LCEL"]
+            MEM["memory.py Redis k=4"]
+            MW["model_wrapper.py"]
+        end
+        PM["provider_manager"]
+        GF["generator_factory\nhttpx pool"]
+        VG["vllm_http_generator"]
+    end
+
+    subgraph external ["سرویس‌های خارجی"]
+        PG[("PostgreSQL")]
+        RD[("Redis")]
+        VLLM["vLLM :8003"]
+        OCR["OCR :8010"]
+        OWUI["OpenWebUI :3000"]
+        FS["Local FS\nRAG uploads"]
+    end
+
+    clients --> CORS --> routes
+    R2 --> D1 --> SVC1
+    R3 --> D2 --> SVC1
+    R4 --> D2 --> VLLM
+    SVC1 --> SVC2 & SVC3 & SVC5 & SVC6 & SVC9
+    SVC3 --> SVC7 & PG & OCR & FS
+    SVC6 --> OWUI
+    SVC2 --> CH --> MEM --> RD
+    SVC2 --> PG
+    SVC1 --> PM --> GF --> VG --> VLLM
+    SVC2 --> CM --> CH --> MW --> PM
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>پورت‌ها و سرویس‌های خارجی</h3>
+      <table>
+        <tr><th>سرویس</th><th>پورت</th><th>نقش</th></tr>
+        <tr><td>llm_fastapi</td><td>8000 (پیش‌فرض) / 8001 (deploy)</td><td>Gateway اصلی</td></tr>
+        <tr><td>vLLM</td><td>8003</td><td>Inference — Qwen3-Coder-30B</td></tr>
+        <tr><td>OpenWebUI</td><td>3000</td><td>رابط کاربری + مدیریت فایل</td></tr>
+        <tr><td>OCR Microservice</td><td>8010</td><td>استخراج متن از تصویر</td></tr>
+        <tr><td>Redis</td><td>6379</td><td>Memory، rate limit، attachment cache</td></tr>
+        <tr><td>PostgreSQL</td><td>5432</td><td>کاربران، مکالمات، RAG</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section id="s3">
+    <div class="section-header">
+      <div class="section-num">۳</div>
+      <h2>مسیرهای API و احراز هویت</h2>
+    </div>
+
+    <div class="card">
+      <table>
+        <tr><th>Prefix</th><th>نوع احراز هویت</th><th>کاربرد</th></tr>
+        <tr><td><code>/api/v1/auth/</code></td><td><span class="tag-gray tag">بدون auth</span></td><td>Login، دریافت و تمدید JWT</td></tr>
+        <tr><td><code>/api/v1/*</code></td><td><span class="tag tag">JWT Bearer</span></td><td>چت داخلی + RAG + مکالمات</td></tr>
+        <tr><td><code>/v1/*</code></td><td><span class="tag tag">API Key</span></td><td>OpenWebUI — سازگار با OpenAI</td></tr>
+        <tr><td><code>/code_bot/v1/*</code></td><td><span class="tag tag">API Key</span></td><td>Cline — پروکسی مستقیم به vLLM</td></tr>
+        <tr><td><code>/health</code></td><td><span class="tag-gray tag">عمومی</span></td><td>بررسی وضعیت Redis</td></tr>
+      </table>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h3>احراز هویت JWT</h3>
+        <ul style="padding-right:18px;line-height:2;">
+          <li>کتابخانه: <code>python-jose</code></li>
+          <li>هش رمز عبور: PBKDF2 (legacy Django)</li>
+          <li>middleware: <code>get_current_user</code></li>
+          <li>بررسی اعتبار Bearer token در هر درخواست</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>احراز هویت API Key</h3>
+        <ul style="padding-right:18px;line-height:2;">
+          <li>ذخیره با SHA-256 hash در PostgreSQL</li>
+          <li>middleware: <code>require_api_key</code></li>
+          <li>Rate limit per minute + monthly quota</li>
+          <li>اجرا از طریق Redis (fail-open)</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="s4">
+    <div class="section-header">
+      <div class="section-num">۴</div>
+      <h2>جریان‌های کاری — چهار مسیر اصلی</h2>
+    </div>
+
+    <div class="card" style="margin-bottom:12px;">
+      <div class="path-row">
+        <div class="path-label">مسیر A</div>
+        <div><strong>چت داخلی با حافظه و RAG</strong> — <code>POST /api/v1/chat/completions</code></div>
+      </div>
+      <p style="margin-top:10px;color:var(--muted);font-size:14px;">JWT، LangChain LCEL، Redis memory (k=4)، PostgreSQL. کامل‌ترین مسیر با حافظه مکالمه و جستجوی معنایی.</p>
+    </div>
+
+    <div class="diagram-wrap">
+      <div class="diagram-title">نمودار ۲ — جریان کاری مسیر A (چت داخلی)</div>
+      <div class="mermaid">
+sequenceDiagram
+    participant C as Client
+    participant R as Router /api/v1
+    participant CCS as chat_completion_service
+    participant RAG as rag_service
+    participant CS as chat_service
+    participant LC as LangChain LCEL
+    participant Redis
+    participant PG as PostgreSQL
+    participant VG as vllm_http_generator
+    participant VLLM as vLLM :8003
+
+    C->>R: POST {messages, model, conversation_id?}
+    R->>CCS: validate JWT → create_chat_completion()
+    CCS->>CCS: is_openwebui_internal_task?
+    alt internal OWUI task
+        CCS->>VG: direct vLLM skip RAG+DB
+        VG->>VLLM: POST
+        VLLM-->>CCS: response
+    else normal chat
+    CCS->>RAG: retrieve_context(query, file_ids)
+    RAG->>PG: semantic search روی rag_chunk
+    RAG-->>CCS: context_text
+    CCS->>PG: get or create Conversation
+    CCS->>CS: chat(conversation, messages, context)
+    CS->>PG: INSERT Message user
+    CS->>LC: chain.ainvoke(input)
+    LC->>Redis: بارگذاری ۴ نوبت آخر
+    Redis-->>LC: history
+    LC->>VG: generate(messages + history + RAG)
+    VG->>VLLM: POST /v1/chat/completions
+    VLLM-->>VG: text + usage
+    VG-->>LC: response
+    LC->>Redis: ذخیره نوبت جدید
+    LC-->>CS: پیام assistant
+    CS->>PG: INSERT Message assistant
+    CS-->>CCS: response + conversation_id
+    CCS-->>C: JSON {message, conversation_id, usage}
+    end
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px; margin-top:28px;">
+      <div class="path-row">
+        <div class="path-label">مسیر B</div>
+        <div><strong>OpenWebUI — سازگار با OpenAI</strong> — <code>POST /v1/chat/completions</code></div>
+      </div>
+      <p style="margin-top:10px;color:var(--muted);font-size:14px;">پرکاربردترین مسیر. مدیریت هوشمند فایل per-turn، OCR تصاویر، و جستجوی RAG. بدون LangChain memory — OpenWebUI کل تاریخچه را هر بار می‌فرستد.</p>
+    </div>
+
+    <div class="diagram-wrap">
+      <div class="diagram-title">نمودار ۳ — جریان کاری مسیر B (OpenWebUI)</div>
+      <div class="mermaid">
+sequenceDiagram
+    participant WebUI as OpenWebUI
+    participant Router as Router /v1
+    participant OWF as openwebui_files
+    participant OWC as openwebui_content
+    participant CCS as chat_completion_service
+    participant OCR as OCR :8010
+    participant RAG as rag_service
+    participant VG as vllm_http_generator
+    participant VLLM as vLLM :8003
+
+    WebUI->>Router: POST تاریخچه کامل + فایل‌ها
+    Router->>Router: X-API-Key SHA-256 lookup
+    Router->>OWF: enrich_request_from_openwebui
+    OWF-->>Router: محتوای فایل inline
+    CCS->>OWC: resolve_turn_file_scope
+    OWC-->>CCS: keep_files, allowed, reason
+    CCS->>OWC: scope_message_content + filter_sources
+    CCS->>CCS: strip image base64 from model input
+    alt تصویر در این نوبت
+        CCS->>OCR: POST image base64
+        OCR-->>CCS: متن استخراج شده
+        CCS->>CCS: inject OCR text
+    end
+    alt فایل RAG موجود
+        CCS->>RAG: retrieve_context
+        RAG-->>CCS: chunks معنایی
+        CCS->>CCS: inject به system prompt
+    end
+    CCS->>CCS: trim to CHAT_MAX_CONTEXT_TOKENS
+    alt stream=true
+        CCS->>VG: generate_stream()
+        VG->>VLLM: POST stream=true
+        VLLM-->>VG: SSE chunks
+        VG-->>CCS: AsyncIterator
+        CCS-->>WebUI: EventSourceResponse
+    else stream=false
+        CCS->>VG: generate()
+        VG->>VLLM: POST
+        VLLM-->>VG: JSON
+        CCS-->>WebUI: JSON response
+    end
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:28px;">
+      <h3>منطق scoping فایل (resolve_turn_file_scope)</h3>
+      <table>
+        <tr><th>reason</th><th>معنی</th></tr>
+        <tr><td><code>request.files</code></td><td>فایل صریح در payload جاری</td></tr>
+        <tr><td><code>last-msg-fresh-source</code></td><td>تگ <code>&lt;source&gt;</code> جدید در آخرین پیام</td></tr>
+        <tr><td><code>last-msg-image-focused</code></td><td>پرسش عکس‌محور — فقط تصاویر جدید</td></tr>
+        <tr><td><code>new-images:N</code></td><td>فقط عکس جدید، بدون PDF قدیمی</td></tr>
+        <tr><td><code>conv-delta</code></td><td>تفاوت با Redis attachment cache</td></tr>
+        <tr><td><code>last-msg-inline-file</code></td><td>PDF/سند inline بدون name/id در تگ source</td></tr>
+        <tr><td><code>carrier-merge</code></td><td>merge محتوا از پیام حامل به آخرین سؤال</td></tr>
+        <tr><td><code>no-new-attach</code></td><td>نوبت بدون فایل جدید — تاریخچه strip می‌شود</td></tr>
+      </table>
+    </div>
+
+    <div class="card" style="margin-bottom:12px;">
+      <div class="path-row">
+        <div class="path-label">مسیر C</div>
+        <div><strong>Code Bot Proxy</strong> — <code>POST /code_bot/v1/chat/completions</code></div>
+      </div>
+      <p style="margin-top:10px;color:var(--muted);font-size:14px;">ساده‌ترین مسیر. API Key → مستقیم vLLM — بدون RAG، بدون memory، کمترین latency.</p>
+    </div>
+
+    <div class="diagram-wrap">
+      <div class="diagram-title">نمودار ۴ — جریان کاری مسیر C (Code Bot)</div>
+      <div class="mermaid">
+flowchart LR
+    Cline["Cline IDE"] -->|"POST /code_bot/v1\nAPI Key"| Router["code_bot router"]
+    Router -->|"rate limit + quota"| DB[("PostgreSQL\nkey lookup")]
+    DB -->|"User OK"| Router
+    Router -->|"raw httpx POST"| VLLM["vLLM :8003"]
+    VLLM -->|"JSON response"| Router
+    Router -->|"raw JSON"| Cline
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:12px; margin-top:28px;">
+      <div class="path-row">
+        <div class="path-label">مسیر D</div>
+        <div><strong>آپلود و پردازش RAG</strong> — <code>POST /api/v1/files</code></div>
+      </div>
+      <p style="margin-top:10px;color:var(--muted);font-size:14px;">JWT → ذخیره فایل → استخراج متن (PDF/Image/Text) → chunking → embedding → PostgreSQL.</p>
+    </div>
+
+    <div class="diagram-wrap">
+      <div class="diagram-title">نمودار ۵ — جریان پردازش RAG (مسیر D)</div>
+      <div class="mermaid">
+flowchart TD
+    Upload["POST /api/v1/files\nJWT Auth"] --> Save["ذخیره در RAG_UPLOAD_DIR"]
+    Save --> DB1["INSERT rag_file"]
+    DB1 --> Q{"process=true?"}
+    Q -->|بله| Extract["extract_text_async"]
+    Q -->|خیر| Done["وضعیت: uploaded"]
+    Extract --> Type{"نوع فایل"}
+    Type -->|PDF| PyPDF["pypdf"]
+    Type -->|Image| EasyOCR["easyocr (fallback)"]
+    Type -->|Text| Direct["خواندن مستقیم"]
+    PyPDF & EasyOCR & Direct --> Chunk["chunk_text با overlap"]
+    Chunk --> Embed["embed_texts\nsentence-transformers"]
+    Embed --> DB2["INSERT rag_chunk\nembedding در metadata JSON"]
+    DB2 --> Done2["آماده برای retrieve_context"]
+      </div>
+    </div>
+  </section>
+
+  <section id="s5">
+    <div class="section-header">
+      <div class="section-num">۵</div>
+      <h2>چرخه عمر برنامه (Lifespan)</h2>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <p>FastAPI از context manager برای مدیریت startup و shutdown استفاده می‌کند. در startup اتصال به Redis بررسی می‌شود، جداول (در محیط dev) ایجاد می‌شوند، و یک task پس‌زمینه برای پاک‌سازی chains راه‌اندازی می‌شود.</p>
+    </div>
+
+    <div class="diagram-wrap">
+      <div class="diagram-title">نمودار ۶ — چرخه عمر برنامه</div>
+      <div class="mermaid">
+sequenceDiagram
+    participant Uvicorn
+    participant App as FastAPI App
+    participant PG as PostgreSQL
+    participant BG as Background Task
+
+    Note over Uvicorn,BG: STARTUP
+    Uvicorn->>App: start lifespan
+    App->>App: Redis ping health check
+    alt AUTO_CREATE_TABLES=true
+        App->>PG: Base.metadata.create_all
+    end
+    App->>BG: create_task chain_cleanup_loop هر 600s
+
+    Note over Uvicorn,BG: RUNNING
+    loop هر ۱۰ دقیقه
+        BG->>BG: ChainManager.cleanup chains بیکار
+    end
+
+    Note over Uvicorn,BG: SHUTDOWN
+    Uvicorn->>App: shutdown signal
+    App->>BG: cancel cleanup task
+    App->>App: GeneratorFactory.close_all
+    App->>App: بستن redis clients
+    App->>PG: engine.dispose
+      </div>
+    </div>
+  </section>
+
+  <section id="s6">
+    <div class="section-header">
+      <div class="section-num">۶</div>
+      <h2>مدل داده (ERD)</h2>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <p>پایگاه داده PostgreSQL شامل ۷ جدول اصلی است. نام جداول <code>users_user</code> و <code>api_keys_apikey</code> میراث مهاجرت از Django است. بردارهای embedding در فیلد JSON داخل <code>rag_chunk.metadata</code> ذخیره می‌شوند.</p>
+    </div>
+
+    <div class="diagram-wrap">
+      <div class="diagram-title">نمودار ۷ — مدل داده (Entity Relationship Diagram)</div>
+      <div class="mermaid">
+erDiagram
+    users_user {
+        int id PK
+        string username
+        string password
+        bool is_active
+        bool is_superuser
+    }
+    api_keys_apikey {
+        int id PK
+        int user_id FK
+        string key_hash
+        string name
+        int rate_limit_per_minute
+        int monthly_token_quota
+        datetime created_at
+    }
+    llm_llmmodel {
+        string id PK
+        string model_path
+        string provider
+        int context_length
+        bool is_active
+        json metadata
+    }
+    llm_conversation {
+        uuid id PK
+        int user_id FK
+        string model_id FK
+        string title
+        text system_prompt
+        datetime created_at
+    }
+    llm_message {
+        int id PK
+        uuid conversation_id FK
+        string role
+        text content
+        int prompt_tokens
+        int completion_tokens
+        json metadata
+        datetime created_at
+    }
+    rag_file {
+        uuid id PK
+        int user_id FK
+        string filename
+        string path
+        string status
+        datetime created_at
+    }
+    rag_chunk {
+        int id PK
+        uuid file_id FK
+        int chunk_index
+        text content
+        int token_count
+        json metadata
+    }
+
+    users_user ||--o{ api_keys_apikey : "has"
+    users_user ||--o{ llm_conversation : "owns"
+    users_user ||--o{ rag_file : "uploads"
+    llm_conversation ||--o{ llm_message : "contains"
+    llm_llmmodel ||--o{ llm_conversation : "uses"
+    rag_file ||--o{ rag_chunk : "split_into"
+      </div>
+    </div>
+  </section>
+
+  <section id="s7">
+    <div class="section-header">
+      <div class="section-num">۷</div>
+      <h2>بهبودهای vLLM HTTP Client</h2>
+    </div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <p>ماژول <code>app/runtime/vllm_http_generator.py</code> یک کلاینت async httpx برای ارتباط با vLLM در فرمت OpenAI-compatible است. در نسخه جدید چندین بهبود مهم اعمال شده:</p>
+    </div>
+
+    <div class="diagram-wrap">
+      <div class="diagram-title">نمودار ۸ — بهبودهای vllm_http_generator</div>
+      <div class="mermaid">
+flowchart LR
+    subgraph before ["نسخه قبلی"]
+        B1["timeout ثابت 300s"]
+        B2["خطاها نادیده گرفته می‌شدند"]
+        B3["bug در آخرین chunk stream"]
+        B4["بدون connection pooling"]
+    end
+    subgraph after ["نسخه جدید"]
+        A1["حداقل 180s read timeout\nاگر config کمتر از 120s"]
+        A2["خطاها re-raise با logging"]
+        A3["last_data bug رفع شد"]
+        A4["max_connections=50\nkeepalive=10"]
+    end
+    before --> after
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>مقایسه تغییرات</h3>
+      <table>
+        <tr><th>جنبه</th><th>قبل</th><th>الان</th></tr>
+        <tr><td>Read timeout</td><td>ثابت 300s یا نامشخص</td><td>حداقل 180s اگر config کمتر از 120s</td></tr>
+        <tr><td>مدیریت خطا</td><td>خطاها swallow می‌شدند</td><td><code>raise_for_status</code> + re-raise با log</td></tr>
+        <tr><td>Stream</td><td>bug در last chunk</td><td>last_data bug fix</td></tr>
+        <tr><td>Connection pool</td><td>بدون محدودیت</td><td><code>max_connections=50</code>، <code>keepalive=10</code></td></tr>
+        <tr><td>Logging</td><td>محدود</td><td>input_chars، estimated tokens، finish_reason</td></tr>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3>متغیرهای پیکربندی</h3>
+      <table>
+        <tr><th>متغیر env</th><th>پیش‌فرض</th><th>توضیح</th></tr>
+        <tr><td><code>VLLM_BASE_URL</code></td><td>http://127.0.0.1:8003/v1</td><td>endpoint سرور vLLM</td></tr>
+        <tr><td><code>VLLM_REQUEST_TIMEOUT</code></td><td>300.0</td><td>سقف timeout (effective min: 180s)</td></tr>
+        <tr><td><code>VLLM_DEFAULT_MODEL</code></td><td>path به Qwen3-Coder</td><td>model id در payload</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section id="s8">
+    <div class="section-header">
+      <div class="section-num">۸</div>
+      <h2>Stack فناوری</h2>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h3>وب و ORM</h3>
+        <table>
+          <tr><th>دسته</th><th>کتابخانه</th></tr>
+          <tr><td>Web</td><td>FastAPI + Uvicorn (ASGI)</td></tr>
+          <tr><td>ORM</td><td>SQLAlchemy 2.0 async + asyncpg</td></tr>
+          <tr><td>Migration</td><td>Alembic</td></tr>
+          <tr><td>Auth</td><td>passlib + python-jose</td></tr>
+          <tr><td>HTTP Client</td><td>httpx async</td></tr>
+          <tr><td>Config</td><td>pydantic-settings</td></tr>
+        </table>
+      </div>
+      <div class="card">
+        <h3>هوش مصنوعی و داده</h3>
+        <table>
+          <tr><th>دسته</th><th>کتابخانه</th></tr>
+          <tr><td>LLM Orchestration</td><td>LangChain LCEL</td></tr>
+          <tr><td>Cache / Memory</td><td>Redis</td></tr>
+          <tr><td>Inference</td><td>vLLM (OpenAI-compatible)</td></tr>
+          <tr><td>RAG Embedding</td><td>sentence-transformers</td></tr>
+          <tr><td>PDF Extract</td><td>pypdf</td></tr>
+          <tr><td>OCR</td><td>easyocr + OCR microservice</td></tr>
+          <tr><td>Test</td><td>pytest (96 test)</td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="s9">
+    <div class="section-header">
+      <div class="section-num">۹</div>
+      <h2>نقاط قوت</h2>
+    </div>
+
+    <div class="grid2">
+      <div>
+        <div class="success-box">
+          <strong>نقاط قوت</strong>
+        </div>
+        <div class="card" style="margin-top:12px;">
+          <ul style="padding-right:18px;line-height:2.2;">
+            <li>Async end-to-end — بدون blocking thread</li>
+            <li>سه سطح سرویس با احراز هویت مستقل</li>
+            <li>Provider abstraction — تعویض آسان vLLM / OpenAI</li>
+            <li>Singleton cache برای httpx clients و LangChain chains</li>
+            <li>RAG semantic با sentence-transformers + fallback lexical</li>
+            <li>Per-turn file scoping هوشمند برای OpenWebUI</li>
+            <li>OCR ایزوله برای مدل متنی بدون vision</li>
+            <li>Rate limit و quota روی API Key</li>
+            <li><strong>96 unit test</strong> با پوشش مسیرهای OWUI و RAG</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px;">
+      <h3>مشکلات رفع‌شده — OpenWebUI و فایل</h3>
+      <table>
+        <tr><th>مشکل</th><th>راه‌حل</th><th>فایل</th></tr>
+        <tr><td>OCR کار نمی‌کرد</td><td><code>current_turn_images</code> + fallback بدون Redis</td><td><code>openwebui_content.py</code></td></tr>
+        <tr><td>مدل روی PDF قدیمی تمرکز می‌کرد</td><td>scoping <code>last-msg-image-focused</code></td><td><code>openwebui_content.py</code></td></tr>
+        <tr><td>از دو سند، فقط یکی به مدل می‌رسید</td><td>رفع باگ <code>_name_matches</code> برای نام خالی</td><td><code>openwebui_content.py</code></td></tr>
+        <tr><td>base64 به مدل متنی ارسال می‌شد</td><td><code>strip_image_bodies=True</code></td><td><code>openwebui_content.py</code></td></tr>
+        <tr><td>PDF فارسی با حروف Presentation Form</td><td>NFKC + pypdf re-extract از bytes خام OWUI</td><td><code>openwebui_files.py</code></td></tr>
+        <tr><td>مقاله انگلیسی inline حذف می‌شد</td><td><code>keep_files=True</code> + <code>allowed=خالی</code> = نگه‌داشتن context</td><td><code>openwebui_content.py</code></td></tr>
+      </table>
+    </div>
+  </section>
+
+  
+  <section id="s11">
+    <div class="section-header">
+      <div class="section-num">۱۱</div>
+      <h2>گزارش‌های حادثه — Locust </h2>
+    </div>
+
+   
+
+    <div class="grid2">
+      <div class="card">
+        <h3>تست بار Locust</h3>
+        <table>
+          <tr><th>مورد</th><th>جزئیات</th></tr>
+          <tr><td>علت</td><td>۶۵۴× HTTP 429 (rate limit 60/min)، ۷۳× 404 (مدل gpt-4)</td></tr>
+          <tr><td>راه‌حل</td><td>locustfile جدید، rate limit=0 برای کلید تست، مدل از /v1/models</td></tr>
+          <tr><td>نتیجه</td><td><span class="tag tag-green">0% fail</span> — 815 chat در 5min، median 180ms</td></tr>
+          <tr><td>وضعیت</td><td>حل‌شده در تست — نیاز به بازگرداندن rate limit در production</td></tr>
+        </table>
+      </div>
+     
+    </div>
+
+    <div class="diagram-wrap">
+      <div class="diagram-title">نمودار ۹ — مسیر PDF در OpenWebUI</div>
+      <div class="mermaid">
+flowchart LR
+    OWUI["OpenWebUI\nBypass ON"] -->|"POST /v1/chat"| GW["Gateway"]
+    GW --> OWF["openwebui_files\nfetch + NFKC + pypdf"]
+    GW --> OWC["openwebui_content\nper-turn scope"]
+    OWC -->|"keep_files"| Model["vLLM prompt"]
+    OWF --> Model
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  <p>گزارش فنی پروژه llm_fastapi — نسخه ۱.۱ — ژوئن ۲۰۲۶</p>
+  <p style="margin-top:6px;font-size:12px;">
+    docs/ARCHITECTURE.md &nbsp;|&nbsp;
+    docs/LOAD_TESTING.md &nbsp;|&nbsp;
+    docs/reports/LOCUST_INCIDENT_REPORT_FA.md &nbsp;|&nbsp;
+    docs/reports/PDF_INCIDENT_REPORT_FA.md
+  </p>
+</footer>
+
+<script>
+  mermaid.initialize({
+    startOnLoad: true,
+    theme: 'default',
+    fontFamily: 'Segoe UI, Tahoma, Arial, sans-serif',
+    flowchart: { useMaxWidth: true, htmlLabels: true },
+    sequence: { useMaxWidth: true },
+    themeVariables: {
+      primaryColor: '#1a3a5c',
+      primaryTextColor: '#ffffff',
+      primaryBorderColor: '#2e7d9f',
+      lineColor: '#2e7d9f',
+      secondaryColor: '#e8f4fb',
+      tertiaryColor: '#f0f8ff',
+      fontSize: '14px'
+    }
+  });
+</script>
+</body>
+</html>

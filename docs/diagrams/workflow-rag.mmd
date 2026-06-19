@@ -1,0 +1,14 @@
+flowchart TD
+    Upload[POST /api/v1/files\nJWT Auth] --> Save[Save to RAG_UPLOAD_DIR]
+    Save --> DB1[INSERT rag_file]
+    DB1 --> Q{process=true?}
+    Q -->|yes| Extract[extract_text_async]
+    Q -->|no| Done[status uploaded]
+    Extract --> Type{file type}
+    Type -->|PDF| PyPDF[pypdf]
+    Type -->|Image| EasyOCR[easyocr local fallback]
+    Type -->|Text| Direct[read file]
+    PyPDF & EasyOCR & Direct --> Chunk[chunk_text overlap]
+    Chunk --> Embed[embed_texts\nsentence-transformers]
+    Embed --> DB2[INSERT rag_chunk\nembedding in metadata JSON]
+    DB2 --> Done2[status ready for retrieve_context]

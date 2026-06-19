@@ -39,6 +39,8 @@ def _month_key(api_key_id: str) -> str:
 
 async def enforce_rate_limit(api_key_id: str, limit_per_minute: int) -> None:
     """در صورت عبور از سقف درخواست در دقیقه، خطای 429 می‌دهد."""
+    if settings.LOAD_TEST_DISABLE_RATE_LIMIT:
+        return
     if not api_key_id or limit_per_minute <= 0:
         return
     try:

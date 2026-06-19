@@ -1,0 +1,7 @@
+flowchart LR
+    Cline[Cline IDE] -->|POST /code_bot/v1/chat/completions\nAPI Key| Router[code_bot router]
+    Router -->|require_api_key\nrate limit + quota| DB[(PostgreSQL\nkey lookup)]
+    DB -->|User OK| Router
+    Router -->|raw httpx POST| VLLM[vLLM :8003]
+    VLLM -->|JSON response| Router
+    Router -->|raw JSON| Cline

@@ -1,5 +1,7 @@
 # LLM Server — FastAPI Migration
 
+**مستندات معماری:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [گزارش فارسی](docs/PROJECT_REPORT_FA.md)
+
 ## چرا FastAPI؟
 
 | مشکل در Django DRF | راه‌حل در FastAPI |
@@ -35,6 +37,9 @@ llm_fastapi/
 │   ├── services/
 │   │   ├── chat_service.py        ← Async ChatService (ainvoke/astream)
 │   │   ├── chat_completion_service.py
+│   │   ├── openwebui_content.py   ← per-turn file scoping
+│   │   ├── openwebui_files.py     ← OpenWebUI file bridge
+│   │   ├── rag_service.py
 │   │   └── model_service.py       ← list_models, conversations, api keys
 │   ├── runtime/
 │   │   ├── vllm_http_generator.py ← Async httpx client for vLLM
@@ -129,6 +134,15 @@ GET  /v1/openapi.json
 ```
 GET /docs     ← Swagger UI
 GET /redoc    ← ReDoc
+```
+
+### Architecture docs
+```
+docs/ARCHITECTURE.md          ← layered architecture + workflows (Mermaid)
+docs/PROJECT_REPORT_FA.md     ← executive report (Persian)
+docs/LOAD_TESTING.md          ← Locust load test guide + rate limit checklist
+docs/diagrams/*.mmd           ← source diagrams for export
+docs/VLLM_HTTP_GENERATOR.md   ← vLLM client improvements
 ```
 
 ---

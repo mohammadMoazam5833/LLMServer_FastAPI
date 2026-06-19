@@ -1,0 +1,66 @@
+erDiagram
+    users_user {
+        int id PK
+        string username
+        string password
+        bool is_active
+        bool is_superuser
+    }
+    api_keys_apikey {
+        int id PK
+        int user_id FK
+        string key_hash
+        string name
+        int rate_limit_per_minute
+        int monthly_token_quota
+        datetime created_at
+    }
+    llm_llmmodel {
+        string id PK
+        string model_path
+        string provider
+        int context_length
+        bool is_active
+        json metadata
+    }
+    llm_conversation {
+        uuid id PK
+        int user_id FK
+        string model_id FK
+        string title
+        text system_prompt
+        datetime created_at
+    }
+    llm_message {
+        int id PK
+        uuid conversation_id FK
+        string role
+        text content
+        int prompt_tokens
+        int completion_tokens
+        json metadata
+        datetime created_at
+    }
+    rag_file {
+        uuid id PK
+        int user_id FK
+        string filename
+        string path
+        string status
+        datetime created_at
+    }
+    rag_chunk {
+        int id PK
+        uuid file_id FK
+        int chunk_index
+        text content
+        int token_count
+        json metadata
+    }
+
+    users_user ||--o{ api_keys_apikey : has
+    users_user ||--o{ llm_conversation : owns
+    users_user ||--o{ rag_file : uploads
+    llm_conversation ||--o{ llm_message : contains
+    llm_llmmodel ||--o{ llm_conversation : uses
+    rag_file ||--o{ rag_chunk : split_into

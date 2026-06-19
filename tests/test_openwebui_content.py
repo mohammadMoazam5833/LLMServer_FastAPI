@@ -127,6 +127,25 @@ def test_inline_file_kept_on_current_turn():
     assert len(scoped) > 2000
 
 
+def test_inline_owui_source_kept_when_keep_files_and_empty_allowed():
+    """OWUI گاهی <source> بدون name/id می‌فرستد؛ last-msg-inline-file نباید context را حذف کند."""
+    body = "A" * 113_686
+    markup = (
+        "### Task:\nRespond using the provided context.\n\n"
+        f"<context>\n<source>{body}</source>\n</context>\n\n"
+        "<user_query>\nSummarize this article\n</user_query>\n"
+    )
+    scoped, _ = scope_message_content(
+        markup,
+        is_current_turn=True,
+        allowed_names=set(),
+        keep_files=True,
+    )
+    assert len(scoped) > 100_000
+    assert "Summarize this article" in scoped
+    assert body[:100] in scoped
+
+
 def test_short_historical_text_preserved():
     scoped, _ = scope_message_content("سلام، این فایل را بخوان", is_current_turn=False, allowed_names=set())
     assert scoped == "سلام، این فایل را بخوان"

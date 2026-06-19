@@ -1,0 +1,14 @@
+flowchart LR
+    subgraph before [Before]
+        B1[fixed 300s timeout]
+        B2[errors swallowed]
+        B3[stream scope bug]
+        B4[no connection pooling]
+    end
+    subgraph after [Current vllm_http_generator]
+        A1["min 180s read timeout\nif config below 120s"]
+        A2[errors re-raised with logging]
+        A3[last_data bug fixed]
+        A4["Limits max_connections=50\nkeepalive=10"]
+    end
+    before --> after
