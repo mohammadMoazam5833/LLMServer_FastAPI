@@ -35,15 +35,37 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=_include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_object=_include_object,
+    )
     with context.begin_transaction():
         context.run_migrations()
+
+
+def _include_object(object, name, type_, reflected, compare_to):
+    """Ignore legacy Django tables still present in some databases."""
+    if type_ == "table" and name in {
+        "django_migrations",
+        "django_content_type",
+        "django_session",
+        "django_admin_log",
+        "auth_group",
+        "auth_permission",
+        "auth_group_permissions",
+        "users_user_groups",
+        "users_user_user_permissions",
+    }:
+        return False
+    return True
 
 
 async def run_async_migrations() -> None:
