@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+from typing import AsyncIterator
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse, JSONResponse
@@ -32,12 +33,47 @@ from app.services.openwebui_files import (
     sanitize_raw_for_validation,
     resolve_owui_chat_id,
 )
+from app.services.token_utils import estimate_message_tokens, estimate_text_tokens
 import logging
 from app.config import get_settings
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["OpenAI Compatible"])
+
+
+async def _record_stream_tokens(
+    stream: AsyncIterator[str],
+    api_key_id: str | None,
+    messages: list,
+) -> AsyncIterator[str]:
+    """Pass through SSE chunks and record token usage when the stream ends."""
+    total_tokens = 0
+    completion_parts: list[str] = []
+
+    async for chunk in stream:
+        if chunk.startswith("data: ") and "[DONE]" not in chunk:
+            try:
+                payload = json.loads(chunk[6:].strip())
+                usage = payload.get("usage") or {}
+                if usage.get("total_tokens"):
+                    total_tokens = int(usage["total_tokens"])
+                delta = (payload.get("choices") or [{}])[0].get("delta") or {}
+                content = delta.get("content")
+                if content:
+                    completion_parts.append(content)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+        yield chunk
+
+    if api_key_id:
+        if not total_tokens:
+            prompt_tokens = sum(estimate_message_tokens(m) for m in messages)
+            completion_tokens = estimate_text_tokens("".join(completion_parts))
+            total_tokens = prompt_tokens + completion_tokens
+        if total_tokens > 0:
+            from app.core.rate_limit import record_tokens
+            await record_tokens(api_key_id, total_tokens)
 
 
 @router.get("/models", response_model=ModelListResponse)
@@ -89,8 +125,17 @@ async def openai_chat_completions(
         logger.exception("Failed while attempting auto-attach recent upload")
 
     if body.stream:
+        api_key_id = getattr(request.state, "api_key_id", None)
+        openai_messages = [
+            {"role": m.role, "content": m.content if isinstance(m.content, str) else str(m.content)}
+            for m in body.messages
+        ]
         return StreamingResponse(
-            create_openai_chat_completion_stream(body, user, db),
+            _record_stream_tokens(
+                create_openai_chat_completion_stream(body, user, db),
+                api_key_id,
+                openai_messages,
+            ),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",

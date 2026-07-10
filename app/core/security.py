@@ -6,8 +6,11 @@ Security helpers:
 """
 import secrets
 import hashlib
+import base64
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from cryptography.fernet import Fernet, InvalidToken
 
 from jose import jwt, JWTError
 from passlib.context import CryptContext
@@ -71,3 +74,29 @@ def generate_api_key() -> str:
 def hash_api_key(raw_key: str) -> str:
     """SHA-256 hash stored in the DB — never store raw keys."""
     return hashlib.sha256(raw_key.encode()).hexdigest()
+
+
+def mask_api_key(raw_key: str) -> str:
+    """Display hint only, e.g. sk-ab12…xy89 (not reversible)."""
+    if len(raw_key) <= 12:
+        return raw_key[:3] + "…"
+    return f"{raw_key[:7]}…{raw_key[-4:]}"
+
+
+def _api_key_fernet() -> Fernet:
+    digest = hashlib.sha256(settings.SECRET_KEY.encode()).digest()
+    return Fernet(base64.urlsafe_b64encode(digest))
+
+
+def encrypt_api_key(raw_key: str) -> str:
+    """Reversible encryption for admin key display (superuser only)."""
+    return _api_key_fernet().encrypt(raw_key.encode()).decode()
+
+
+def decrypt_api_key(encrypted: str | None) -> str | None:
+    if not encrypted:
+        return None
+    try:
+        return _api_key_fernet().decrypt(encrypted.encode()).decode()
+    except InvalidToken:
+        return None

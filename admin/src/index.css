@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Estedad", "Vazirmatn", ui-sans-serif, system-ui, sans-serif;
+  --color-page: #f4f4f5;
+  --color-sidebar: #09090b;
+  --color-accent: #8b5cf6;
+  --color-accent-hover: #7c3aed;
+  --color-accent-soft: #ede9fe;
+}
+
+body {
+  @apply text-zinc-900 antialiased;
+  font-family: var(--font-sans);
+  background: var(--color-page);
+  min-height: 100vh;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #d4d4d8 transparent;
+}
+
+input, select, button, textarea {
+  font-family: inherit;
+}
+
+/* Linear-style focus ring */
+:focus-visible {
+  outline: 2px solid #8b5cf6;
+  outline-offset: 2px;
+}

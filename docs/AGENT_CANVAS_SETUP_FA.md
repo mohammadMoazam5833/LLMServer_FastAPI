@@ -2,6 +2,8 @@
 
 جایگزین ساده‌تر OpenHands برای کار روی `LLM_SERVER` — بدون Docker sandbox و بدون دردسر permission.
 
+برای توضیح معماری (Canvas vs agent-server vs OpenHands Docker): [AGENT_CANVAS_VS_AGENT_SERVER_FA.md](AGENT_CANVAS_VS_AGENT_SERVER_FA.md)
+
 ---
 
 ## پیش‌نیازها
@@ -87,7 +89,7 @@ CANVAS_PORT=8002 \
 اگر فقط Agent Canvas می‌خواهید:
 
 ```bash
-docker stop openhands-app
+./scripts/stop_openhands.sh
 ```
 
 ---

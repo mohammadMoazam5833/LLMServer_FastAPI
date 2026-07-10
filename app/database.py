@@ -47,3 +47,22 @@ async def get_db() -> AsyncSession:
         except Exception:
             await session.rollback()
             raise
+
+
+async def ensure_api_key_columns() -> None:
+    """Lightweight schema patches for api_keys_apikey (no Alembic required)."""
+    from sqlalchemy import text
+
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "ALTER TABLE api_keys_apikey "
+                "ADD COLUMN IF NOT EXISTS key_hint VARCHAR(32) DEFAULT ''"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE api_keys_apikey "
+                "ADD COLUMN IF NOT EXISTS key_encrypted VARCHAR(512) DEFAULT ''"
+            )
+        )

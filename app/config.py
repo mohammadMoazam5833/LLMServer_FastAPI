@@ -33,6 +33,8 @@ class Settings(BaseSettings):
 
     # ── API Key ────────────────────────────────────────────────────────────────
     API_KEY_PREFIX: str = "sk-"
+    # سقف پیش‌فرض درخواست در دقیقه به ازای هر کلید (~۱۵ کاربر همزمان + ابزارهای agent)
+    DEFAULT_RATE_LIMIT_PER_MINUTE: int = 180
 
     # ── LLM Runtime ───────────────────────────────────────────────────────────
     VLLM_BASE_URL: str = "http://127.0.0.1:8003/v1"

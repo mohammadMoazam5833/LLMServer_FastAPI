@@ -166,3 +166,68 @@ class RAGFileResponse(BaseModel):
     status: str
     created_at: datetime
     chunk_count: int = 0
+
+
+# ── Admin ──────────────────────────────────────────────────────────────────────
+
+class AdminUserCreate(BaseModel):
+    username: str
+    password: str
+    email: str = ""
+    is_active: bool = True
+
+
+class AdminUserUpdate(BaseModel):
+    email: str | None = None
+    is_active: bool | None = None
+
+
+class AdminUserOut(BaseModel):
+    id: int
+    username: str
+    email: str
+    is_active: bool
+    key_count: int = 0
+
+
+class AdminAPIKeyCreate(BaseModel):
+    user_id: int
+    name: str = ""
+    rate_limit_per_minute: int = Field(default=180, ge=1)
+    monthly_token_quota: int = Field(default=1_000_000, ge=0)
+
+
+class AdminAPIKeyUpdate(BaseModel):
+    is_active: bool | None = None
+    rate_limit_per_minute: int | None = Field(default=None, ge=1)
+    monthly_token_quota: int | None = Field(default=None, ge=0)
+
+
+class AdminAPIKeyOut(BaseModel):
+    id: uuid.UUID
+    user_id: int
+    username: str
+    name: str
+    key_hint: str = ""
+    raw_key: str | None = None
+    is_active: bool
+    rate_limit_per_minute: int
+    monthly_token_quota: int
+    created_at: datetime
+    revoked_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class AdminAPIKeyCreatedResponse(AdminAPIKeyOut):
+    raw_key: str
+
+
+class UsageSummary(BaseModel):
+    api_key_id: uuid.UUID
+    user_id: int
+    username: str
+    key_name: str
+    tokens_used: int
+    monthly_token_quota: int
+    percent_used: float

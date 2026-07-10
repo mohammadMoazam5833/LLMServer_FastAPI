@@ -81,6 +81,19 @@ async def enforce_quota(api_key_id: str, monthly_quota: int) -> None:
         )
 
 
+async def get_monthly_usage(api_key_id: str) -> int:
+    """Returns token usage for the current month from Redis (0 if unavailable)."""
+    if not api_key_id:
+        return 0
+    try:
+        client = _client()
+        used_raw = await client.get(_month_key(api_key_id))
+        return int(used_raw) if used_raw else 0
+    except Exception as exc:
+        logger.warning("⚠️  Quota read skipped (Redis error): %s", exc)
+        return 0
+
+
 async def record_tokens(api_key_id: str, tokens: int) -> None:
     """مصرف توکن را به شمارنده‌ی ماهانه اضافه می‌کند (TTL حدود ۴۰ روز)."""
     if not api_key_id or tokens <= 0:

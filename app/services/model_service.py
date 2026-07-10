@@ -62,12 +62,18 @@ async def get_conversation_detail(conv_id: uuid.UUID, db: AsyncSession, user_id:
 async def create_api_key(user_id: int, name: str, db: AsyncSession) -> tuple:
     """Returns (APIKey ORM object, raw_key_string). raw_key shown only once."""
     from app.models.api_key import APIKey
-    from app.core.security import generate_api_key, hash_api_key
+    from app.core.security import generate_api_key, hash_api_key, mask_api_key, encrypt_api_key
 
     raw_key = generate_api_key()
     key_hash = hash_api_key(raw_key)
 
-    api_key = APIKey(user_id=user_id, name=name, key_hash=key_hash)
+    api_key = APIKey(
+        user_id=user_id,
+        name=name,
+        key_hash=key_hash,
+        key_hint=mask_api_key(raw_key),
+        key_encrypted=encrypt_api_key(raw_key),
+    )
     db.add(api_key)
     await db.flush()
     return api_key, raw_key

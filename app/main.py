@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from app.core.spa_static import SPAStaticFiles
 
 from app.config import get_settings
 from app.database import engine, Base
@@ -28,6 +31,7 @@ from app.api.auth.router import router as auth_router
 from app.api.internal.router import router as internal_router
 from app.api.openai.router import router as openai_router
 from app.api.code_bot.router import router as code_bot_router
+from app.api.admin.router import router as admin_router
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -78,6 +82,9 @@ async def lifespan(app: FastAPI):
         logger.info("🧱 Tables ensured via create_all (dev mode)")
     else:
         logger.info("🧱 AUTO_CREATE_TABLES disabled — manage schema with Alembic")
+
+    from app.database import ensure_api_key_columns
+    await ensure_api_key_columns()
 
     _cleanup_task = asyncio.create_task(_chain_cleanup_loop())
     logger.info("✅ Server ready")
@@ -132,8 +139,13 @@ def create_app() -> FastAPI:
     # Routers
     app.include_router(auth_router, prefix="/api/v1/auth")
     app.include_router(internal_router, prefix="/api/v1")
+    app.include_router(admin_router, prefix="/api/v1/admin")
     app.include_router(openai_router, prefix="/v1")
     app.include_router(code_bot_router, prefix="/code_bot/v1")
+
+    admin_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "admin", "dist")
+    if os.path.isdir(admin_dist):
+        app.mount("/admin", SPAStaticFiles(directory=admin_dist, html=True), name="admin")
 
     @app.get("/health")
     async def health():

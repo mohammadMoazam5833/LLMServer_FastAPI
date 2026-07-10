@@ -143,6 +143,8 @@ docs/PROJECT_REPORT_FA.md     ← executive report (Persian)
 docs/LOAD_TESTING.md          ← Locust load test guide + rate limit checklist
 docs/OPENHANDS_SETUP_FA.md    ← OpenHands + code_bot stable setup (Persian)
 docs/AGENT_CANVAS_SETUP_FA.md ← Agent Canvas local + code_bot (ساده‌تر، پیشنهادی)
+docs/AGENT_CANVAS_VS_AGENT_SERVER_FA.md ← چرا Canvas و agent-server جدا هستند
+docs/ADMIN_DASHBOARD_FA.md    ← داشبورد ادمین (کاربر، API key، مصرف توکن)
 docs/diagrams/*.mmd           ← source diagrams for export
 docs/VLLM_HTTP_GENERATOR.md   ← vLLM client improvements
 ```

@@ -19,9 +19,11 @@ class APIKey(Base):
     )
     name: Mapped[str] = mapped_column(String(64), default="")
     key_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
+    key_hint: Mapped[str] = mapped_column(String(32), default="")
+    key_encrypted: Mapped[str] = mapped_column(String(512), default="")
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    rate_limit_per_minute: Mapped[int] = mapped_column(Integer, default=60)
+    rate_limit_per_minute: Mapped[int] = mapped_column(Integer, default=180)
     monthly_token_quota: Mapped[int] = mapped_column(BigInteger, default=1_000_000)
 
     created_at: Mapped[datetime] = mapped_column(

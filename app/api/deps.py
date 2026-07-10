@@ -58,6 +58,18 @@ async def get_current_user(
     return user
 
 
+async def require_superuser(
+    user: User = Depends(get_current_user),
+) -> User:
+    """Requires an authenticated user with is_superuser=True."""
+    if not user.is_superuser:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return user
+
+
 async def require_api_key(
     request: Request,
     x_api_key: str | None = Security(_api_key_header),
