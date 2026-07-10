@@ -141,6 +141,8 @@ GET /redoc    ← ReDoc
 docs/ARCHITECTURE.md          ← layered architecture + workflows (Mermaid)
 docs/PROJECT_REPORT_FA.md     ← executive report (Persian)
 docs/LOAD_TESTING.md          ← Locust load test guide + rate limit checklist
+docs/OPENHANDS_SETUP_FA.md    ← OpenHands + code_bot stable setup (Persian)
+docs/AGENT_CANVAS_SETUP_FA.md ← Agent Canvas local + code_bot (ساده‌تر، پیشنهادی)
 docs/diagrams/*.mmd           ← source diagrams for export
 docs/VLLM_HTTP_GENERATOR.md   ← vLLM client improvements
 ```
