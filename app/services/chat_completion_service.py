@@ -725,21 +725,34 @@ async def _effective_context_length(model: LLMModel) -> int:
     کل کانتکست ۱۲۸k را اشغال نکند. روت code_bot/Cline از این تابع عبور نمی‌کند و کامل باقی می‌ماند.
     """
     db_ctx = model.context_length or 8192
-    base = settings.VLLM_BASE_URL
+    from app.runtime.vllm_routing import resolve_vllm_base_url
+    base = resolve_vllm_base_url(model)
     if base not in _vllm_ctx_cache:
         detected = 0
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(f"{base.rstrip('/')}/models")
                 resp.raise_for_status()
-                for m in resp.json().get("data", []):
-                    if m.get("max_model_len"):
-                        detected = int(m["max_model_len"])
-                        break
+                # Prefer matching served name; else first max_model_len
+                data = resp.json().get("data", [])
+                matched = next(
+                    (m for m in data if m.get("id") in (model.model_path, model.id) and m.get("max_model_len")),
+                    None,
+                )
+                if matched:
+                    detected = int(matched["max_model_len"])
+                else:
+                    for m in data:
+                        if m.get("max_model_len"):
+                            detected = int(m["max_model_len"])
+                            break
             if detected:
-                logger.info("🧭 Detected vLLM max_model_len=%d (DB context_length=%d)", detected, db_ctx)
+                logger.info(
+                    "🧭 Detected vLLM max_model_len=%d for %s (DB context_length=%d)",
+                    detected, base, db_ctx,
+                )
         except Exception as exc:
-            logger.warning("⚠️  Could not detect vLLM max_model_len, using DB value: %s", exc)
+            logger.warning("⚠️  Could not detect vLLM max_model_len (%s), using DB value: %s", base, exc)
         _vllm_ctx_cache[base] = detected
 
     detected = _vllm_ctx_cache[base]

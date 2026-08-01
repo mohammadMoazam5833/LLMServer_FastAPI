@@ -1,0 +1,78 @@
+# Gateway Deployment. Image must be pullable by the cluster
+# (push via scripts/k8s_push_gateway_image.sh, then set images in kustomization).
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: team-b
+  labels:
+    app.kubernetes.io/name: llm-gateway
+    app.kubernetes.io/part-of: llm-fastapi
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8001
+      targetPort: 8001
+  selector:
+    app.kubernetes.io/name: llm-gateway
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: team-b
+  labels:
+    app.kubernetes.io/name: llm-gateway
+    app.kubernetes.io/part-of: llm-fastapi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llm-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: llm-gateway
+        app.kubernetes.io/part-of: llm-fastapi
+    spec:
+      # Uncomment for private registry (secret from 33-gateway-imagepullsecret.yaml.example
+      # or kubectl create secret docker-registry):
+      # imagePullSecrets:
+      #   - name: llm-registry
+      #
+      # Pin to CPU worker; image from host registry :5000
+      nodeName: worker-s01
+      containers:
+        - name: gateway
+          image: llm_proxy:latest
+          # IfNotPresent: works with offline import on a pinned node.
+          # Always: force pull from registry after each push.
+          imagePullPolicy: Never
+          ports:
+            - name: http
+              containerPort: 8001
+          envFrom:
+            - configMapRef:
+                name: llm-gateway-config
+            - secretRef:
+                name: llm-gateway
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi

@@ -1,3 +1,14 @@
+# llm_fastapi stack — Docker Compose
+#
+# Current (stable on this host):
+# - gateway / vLLM / OCR: network_mode=host (GPU + host Postgres 127.0.0.1)
+# - redis: bridge + published 6379 (reachable via localhost from host-network services)
+# - Postgres: remains on HOST systemd (per plan — do not put in compose yet)
+#
+# Prepared next step for Kubernetes: see docker-compose.bridge.yml + docs/DOCKER_K8S_FA.md
+# Bridge overlay is blocked here until docker→host firewall allows host ports
+# (or vLLM/OCR also leave host network).
+
 services:
   redis:
     image: redis:7-alpine
@@ -10,9 +21,74 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
+      interval: 5s
       timeout: 3s
       retries: 5
+
+  vllm:
+    image: vllm/vllm-openai:v0.21.0
+    container_name: llm_fastapi_vllm
+    restart: unless-stopped
+    runtime: nvidia
+    network_mode: host
+    ipc: host
+    volumes:
+      - /home/moazemi-gc/extra_space/models:/models:ro
+    command: >
+      /models/Qwen3-Coder-30B-A3B-Instruct
+      --served-model-name qwen3-coder-30b
+      --host 0.0.0.0
+      --port 8003
+      --dtype bfloat16
+      --gpu-memory-utilization 0.85
+      --max-model-len 128000
+      --enable-chunked-prefill
+      --enable-prefix-caching
+      --max-num-seqs 32
+      --moe-backend triton
+      --enable-auto-tool-choice
+      --tool-call-parser qwen3_coder
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8003/v1/models || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 60s
+
+  gateway:
+    image: llm_proxy:latest
+    container_name: llm_fastapi_gateway
+    network_mode: host
+    restart: unless-stopped
+    env_file: .env
+    # With host networking, loopback reaches host Postgres + published Redis + vLLM/OCR.
+    depends_on:
+      redis:
+        condition: service_healthy
+      vllm:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -f http://localhost:8001/health || python3 -c 'import urllib.request; urllib.request.urlopen(\"http://127.0.0.1:8001/health\")' || exit 1",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  ocr:
+    image: ocr_service:latest
+    container_name: llm_fastapi_ocr
+    restart: unless-stopped
+    runtime: nvidia
+    network_mode: host
+    ipc: host
+    command:
+      ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8010", "--workers", "1"]
+    depends_on:
+      gateway:
+        condition: service_healthy
 
 volumes:
   redis_data:

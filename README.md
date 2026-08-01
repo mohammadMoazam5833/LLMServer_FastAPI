@@ -1,6 +1,6 @@
 # LLM Server — FastAPI Migration
 
-**مستندات معماری:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [گزارش فارسی](docs/PROJECT_REPORT_FA.md)
+**مستندات معماری:** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · [گزارش فارسی](docs/PROJECT_REPORT_FA.md) · [Docker / K8s](docs/DOCKER_K8S_FA.md) · مانیفست‌ها: [`k8s/team-b/`](k8s/team-b/)
 
 ## چرا FastAPI؟
 

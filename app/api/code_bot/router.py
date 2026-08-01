@@ -1,10 +1,15 @@
 """
-Direct vLLM access endpoints for Cline integration.
+Direct vLLM access endpoints for Cline / Cursor / OpenHands.
 Auth: X-API-Key header (or Bearer <key>).
 Mounted at: /code_bot/v1/
 
 Acts as a lightweight reverse proxy to vLLM — no RAG, no context
 processing, no conversation tracking.  Just auth + passthrough.
+
+Routing:
+  - Looks up the request ``model`` in llm_llmmodel (id or model_path)
+  - Uses that row's ``base_url`` when set; else settings.VLLM_BASE_URL
+  - Rewrites body.model to the DB ``model_path`` (vLLM --served-model-name)
 """
 from __future__ import annotations
 
@@ -15,19 +20,20 @@ from typing import AsyncIterator
 import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse, JSONResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_api_key
 from app.database import get_db
+from app.models.llm import LLMModel
 from app.models.user import User
 from app.config import get_settings
+from app.runtime.vllm_routing import load_active_model, resolve_vllm_base_url
 from app.services.token_utils import estimate_message_tokens, estimate_text_tokens
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
 router = APIRouter(tags=["Code Bot Direct"])
-
-VLLM_BASE = settings.VLLM_BASE_URL.rstrip("/")
 
 
 async def _forward_headers(request: Request) -> dict[str, str]:
@@ -51,21 +57,48 @@ def _extract_usage_from_payload(payload: dict) -> int:
     return prompt + completion
 
 
+async def _prepare_upstream(
+    db: AsyncSession,
+    body: dict,
+) -> tuple[str, dict]:
+    """Return (vllm_base_url, body with model rewritten to model_path)."""
+    client_model = body.get("model")
+    if isinstance(client_model, str):
+        client_model = client_model.strip() or None
+    else:
+        client_model = None
+
+    model = await load_active_model(db, client_model) if client_model else None
+    base = resolve_vllm_base_url(model)
+    out = dict(body)
+    if model is not None and model.model_path and out.get("model") != model.model_path:
+        logger.info(
+            "🔀 code_bot rewrite model %r → %r | base_url=%s",
+            client_model,
+            model.model_path,
+            base,
+        )
+        out["model"] = model.model_path
+    return base, out
+
+
 async def _stream_from_vllm(
     body: dict,
     headers: dict,
+    base_url: str,
     api_key_id: str | None = None,
 ) -> AsyncIterator[bytes]:
     """Async generator that streams bytes from vLLM while keeping client alive."""
     total_tokens = 0
     completion_parts: list[str] = []
+    upstream = f"{base_url.rstrip('/')}/chat/completions"
 
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(settings.VLLM_REQUEST_TIMEOUT, connect=10.0),
     ) as client:
         async with client.stream(
             "POST",
-            f"{VLLM_BASE}/chat/completions",
+            upstream,
             json=body,
             headers=headers,
         ) as resp:
@@ -113,11 +146,34 @@ async def list_models(
     user: User = Depends(require_api_key),
     db: AsyncSession = Depends(get_db),
 ):
-    """Proxy GET /v1/models to vLLM."""
+    """
+    List gateway-registered models (so clients see every active DB model).
+
+    Each entry ``id`` is the gateway public id; ``root`` is the served name.
+    """
+    result = await db.execute(
+        select(LLMModel).where(LLMModel.is_active.is_(True)).order_by(LLMModel.id)
+    )
+    rows = result.scalars().all()
+    if rows:
+        data = [
+            {
+                "id": m.id,
+                "object": "model",
+                "created": 0,
+                "owned_by": "gateway",
+                "root": m.model_path,
+            }
+            for m in rows
+        ]
+        return JSONResponse(content={"object": "list", "data": data})
+
+    # Fallback: proxy single default vLLM if DB has no models
+    base = resolve_vllm_base_url(None)
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{VLLM_BASE}/models",
+                f"{base}/models",
                 headers=await _forward_headers(request),
             )
             resp.raise_for_status()
@@ -142,7 +198,7 @@ async def chat_completions(
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Direct passthrough to vLLM /v1/chat/completions.
+    Direct passthrough to the vLLM instance for the selected model.
 
     No RAG, no flattening, no conversation tracking — pure vLLM.
     Supports both streaming and non-streaming responses.
@@ -155,13 +211,14 @@ async def chat_completions(
             content={"error": f"Invalid JSON body: {str(e)}"},
         )
 
+    base_url, body = await _prepare_upstream(db, body)
     is_stream = body.get("stream", False)
     headers = await _forward_headers(request)
     api_key_id = getattr(request.state, "api_key_id", None)
 
     if is_stream:
         return StreamingResponse(
-            _stream_from_vllm(body, headers, api_key_id=api_key_id),
+            _stream_from_vllm(body, headers, base_url, api_key_id=api_key_id),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -174,7 +231,7 @@ async def chat_completions(
             timeout=httpx.Timeout(settings.VLLM_REQUEST_TIMEOUT, connect=10.0),
         ) as client:
             resp = await client.post(
-                f"{VLLM_BASE}/chat/completions",
+                f"{base_url.rstrip('/')}/chat/completions",
                 json=body,
                 headers=headers,
             )

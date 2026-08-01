@@ -1,0 +1,30 @@
+# Apply after RBAC is granted and secrets are created from *.example files:
+#   cp 10-postgres-secret.yaml.example 10-postgres-secret.yaml
+#   cp 31-gateway-secret.yaml.example 31-gateway-secret.yaml
+#   # edit passwords / DATABASE_URL / SECRET_KEY
+#   kubectl apply -k k8s/team-b/
+#
+# Image delivery (pick one):
+#   A) REGISTRY=... ./scripts/k8s_push_gateway_image.sh
+#      then set images.newName / newTag below
+#   B) ./scripts/k8s_save_gateway_image.sh + ctr import on worker-s01
+#      keep image llm_proxy:latest and nodeName: worker-s01
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: team-b
+resources:
+  - 11-postgres-statefulset.yaml
+  - 20-redis.yaml
+  - 30-gateway-configmap.yaml
+  - 32-gateway-deployment.yaml
+  # Uncomment after copying examples to real secret files (gitignored):
+  - 10-postgres-secret.yaml
+  - 31-gateway-secret.yaml
+images:
+  - name: llm_proxy
+    newName: 172.16.40.188:5000/llm_proxy
+    newTag: latest
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: llm-fastapi
+    includeSelectors: false

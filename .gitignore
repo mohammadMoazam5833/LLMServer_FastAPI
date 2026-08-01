@@ -5,3 +5,8 @@ __pycache__/
 *.pyc
 .pytest_cache/
 admin/node_modules/
+backups/
+k8s/team-b/10-postgres-secret.yaml
+k8s/team-b/31-gateway-secret.yaml
+k8s/team-b/33-gateway-imagepullsecret.yaml
+k8s/team-b/kustomization.image.env

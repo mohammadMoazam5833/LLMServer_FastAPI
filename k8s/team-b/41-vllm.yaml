@@ -1,0 +1,113 @@
+# vLLM — BF16 Qwen3-Coder-30B on MIG 3g.71gb (in-cluster, not host).
+# Context 32k first (safer VRAM); bump to 40960 after smoke test if headroom allows.
+# NOTE: Service must NOT be named "vllm" — K8s injects VLLM_PORT=tcp://... and breaks vLLM.
+apiVersion: v1
+kind: Service
+metadata:
+  name: llm-vllm
+  namespace: team-b
+  labels:
+    app.kubernetes.io/name: llm-vllm
+    app.kubernetes.io/part-of: llm-fastapi
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8003
+      targetPort: 8003
+  selector:
+    app.kubernetes.io/name: llm-vllm
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm
+  namespace: team-b
+  labels:
+    app.kubernetes.io/name: llm-vllm
+    app.kubernetes.io/part-of: llm-fastapi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llm-vllm
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: llm-vllm
+        app.kubernetes.io/part-of: llm-fastapi
+    spec:
+      # Prevent *any* Service env injection (VLLM_PORT collision)
+      enableServiceLinks: false
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: ["worker-g01"]
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:v0.21.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - /models/Qwen3-Coder-30B-A3B-Instruct
+            - --served-model-name
+            - qwen3-coder-30b
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8003"
+            - --dtype
+            - bfloat16
+            - --gpu-memory-utilization
+            - "0.92"
+            - --max-model-len
+            - "32768"
+            - --enable-chunked-prefill
+            - --enable-prefix-caching
+            - --max-num-seqs
+            - "8"
+            - --moe-backend
+            - triton
+            - --enable-auto-tool-choice
+            - --tool-call-parser
+            - qwen3_coder
+          ports:
+            - name: http
+              containerPort: 8003
+          env:
+            - name: HUGGING_FACE_HUB_TOKEN
+              value: ""
+          volumeMounts:
+            - name: model
+              mountPath: /models
+              readOnly: true
+          resources:
+            requests:
+              cpu: "2"
+              memory: 8Gi
+              nvidia.com/mig-3g.71gb: "1"
+            limits:
+              cpu: "8"
+              memory: 32Gi
+              nvidia.com/mig-3g.71gb: "1"
+          readinessProbe:
+            httpGet:
+              path: /v1/models
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            failureThreshold: 60
+          livenessProbe:
+            httpGet:
+              path: /v1/models
+              port: http
+            initialDelaySeconds: 180
+            periodSeconds: 30
+            failureThreshold: 10
+      volumes:
+        - name: model
+          persistentVolumeClaim:
+            claimName: qwen-model

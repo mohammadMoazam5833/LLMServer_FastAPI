@@ -1,0 +1,76 @@
+# OCR microservice on small MIG slice (host currently ~1.2GiB VRAM).
+apiVersion: v1
+kind: Service
+metadata:
+  name: ocr
+  namespace: team-b
+  labels:
+    app.kubernetes.io/name: llm-ocr
+    app.kubernetes.io/part-of: llm-fastapi
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 8010
+      targetPort: 8010
+  selector:
+    app.kubernetes.io/name: llm-ocr
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ocr
+  namespace: team-b
+  labels:
+    app.kubernetes.io/name: llm-ocr
+    app.kubernetes.io/part-of: llm-fastapi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llm-ocr
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: llm-ocr
+        app.kubernetes.io/part-of: llm-fastapi
+    spec:
+      nodeName: worker-g01
+      containers:
+        - name: ocr
+          image: ocr_service:latest
+          imagePullPolicy: Never
+          args:
+            - uvicorn
+            - main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8010"
+            - --workers
+            - "1"
+          ports:
+            - name: http
+              containerPort: 8010
+          resources:
+            requests:
+              cpu: 500m
+              memory: 2Gi
+              nvidia.com/mig-1g.18gb: "1"
+            limits:
+              cpu: "2"
+              memory: 8Gi
+              nvidia.com/mig-1g.18gb: "1"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 18
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 30

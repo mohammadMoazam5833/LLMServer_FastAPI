@@ -17,6 +17,9 @@ class LLMModel(Base):
         String(64), primary_key=True, comment="Public model id, e.g. code-bot-v1"
     )
     model_path: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Per-model OpenAI-compatible base, e.g. http://llm-vllm-a:8003/v1
+    # Empty/null → fall back to settings.VLLM_BASE_URL
+    base_url: Mapped[str | None] = mapped_column(String(512), nullable=True, default=None)
     provider: Mapped[str] = mapped_column(String(32), default="local")
     context_length: Mapped[int] = mapped_column(Integer, default=8192)
     max_output_tokens: Mapped[int] = mapped_column(Integer, default=2048)

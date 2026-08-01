@@ -1,0 +1,20 @@
+# Non-sensitive gateway settings. Point VLLM/OCR at the Docker host until those
+# services move into the cluster. Adjust HOST_IP for your VM.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-gateway-config
+  namespace: team-b
+  labels:
+    app.kubernetes.io/name: llm-gateway
+    app.kubernetes.io/part-of: llm-fastapi
+data:
+  # Docker-host GPU stack (this VM was 172.16.40.188) — change if needed
+  VLLM_BASE_URL: "http://172.16.40.188:8003/v1"
+  VLLM_DEFAULT_MODEL: "qwen3-coder-30b"
+  VLLM_REQUEST_TIMEOUT: "300.0"
+  OCR_SERVICE_URL: "http://172.16.40.188:8010/api/v1/ocr"
+  REDIS_URL: "redis://redis:6379/0"
+  AUTO_CREATE_TABLES: "false"
+  DEBUG: "false"
+  ALLOWED_ORIGINS: '["*"]'

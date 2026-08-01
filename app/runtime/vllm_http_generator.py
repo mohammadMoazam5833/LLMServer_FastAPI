@@ -8,6 +8,7 @@ import httpx
 
 from app.config import get_settings
 from app.services.token_utils import estimate_message_tokens
+from app.runtime.vllm_routing import resolve_vllm_base_url
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -15,8 +16,14 @@ logger = logging.getLogger(__name__)
 
 class VLLMHttpGenerator:
     def __init__(self, config: Any):
-        self.base_url = settings.VLLM_BASE_URL
+        self.base_url = resolve_vllm_base_url(config)
         self.model = config.model_path
+        logger.info(
+            "🌐 VLLMHttpGenerator ready | model_id=%s | served=%s | base_url=%s",
+            getattr(config, "id", "?"),
+            self.model,
+            self.base_url,
+        )
         
         # ۱. حل مشکل تایم‌اوت: اگر مقدار تنظیمات خیلی کم یا نامعتبر بود، حداقل ۱۸۰ ثانیه اعمال می‌شود
         config_timeout = getattr(settings, "VLLM_REQUEST_TIMEOUT", 180.0)
