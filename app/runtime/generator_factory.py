@@ -16,10 +16,18 @@ class GeneratorFactory:
     def _cache_key(cls, config) -> str:
         from app.runtime.vllm_routing import resolve_vllm_base_url
         base = resolve_vllm_base_url(config)
-        return f"{getattr(config, 'id', 'unknown')}@{base}"
+        path = getattr(config, "model_path", "") or ""
+        return f"{getattr(config, 'id', 'unknown')}@{base}@{path}"
 
     @classmethod
     def get(cls, config) -> VLLMHttpGenerator:
+        from app.runtime.vllm_routing import resolve_vllm_base_url
+        base = resolve_vllm_base_url(config)
+        if not base:
+            raise RuntimeError(
+                f"Model {getattr(config, 'id', '?')!r} has no usable api_base "
+                "(missing/inactive connection). Re-bind it in admin."
+            )
         key = cls._cache_key(config)
         if key not in cls._cache:
             logger.info("🌐 Creating vLLM HTTP generator for model: %s", key)

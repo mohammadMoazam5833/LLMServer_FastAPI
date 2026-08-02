@@ -686,6 +686,7 @@ from app.config import get_settings
 from app.models.llm import LLMModel, Conversation
 from app.models.user import User
 from app.runtime.provider_manager import ProviderManager
+from app.runtime.fallback import generate_stream_with_fallback, generate_with_fallback
 from app.services.chat_service import ChatService
 from app.services.openwebui_tasks import is_openwebui_internal_request
 from app.services.openwebui_content import (
@@ -1309,10 +1310,20 @@ def _file_ids(data: ChatCompletionRequest) -> list[uuid.UUID]:
 
 
 async def _load_model(data: ChatCompletionRequest, db: AsyncSession) -> LLMModel:
-    result = await db.execute(select(LLMModel).where(LLMModel.id == data.model, LLMModel.is_active == True))
+    from sqlalchemy.orm import selectinload
+    result = await db.execute(
+        select(LLMModel)
+        .where(LLMModel.id == data.model, LLMModel.is_active == True)  # noqa: E712
+        .options(selectinload(LLMModel.connection))
+    )
     model = result.scalar_one_or_none()
     if model is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Model '{data.model}' not found")
+    if model.connection_id and (model.connection is None or not model.connection.is_active):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Model '{data.model}' credential/connection is missing or inactive",
+        )
     return model
 
 
@@ -1320,7 +1331,6 @@ async def _load_model(data: ChatCompletionRequest, db: AsyncSession) -> LLMModel
 
 async def _create_internal_task_completion(data: ChatCompletionRequest, db: AsyncSession) -> dict:
     model = await _load_model(data, db)
-    generator = ProviderManager.get_provider(model)
     max_tokens = _resolve_max_tokens(data.max_tokens, model.max_output_tokens)
     # تسک‌های داخلی OpenWebUI (عنوان/تگ/follow-up) نیازی به OCR ندارند؛ غیرفعال‌سازی OCR
     # از پردازش تکراری و کند تصاویر در این درخواست‌های پس‌زمینه جلوگیری می‌کند.
@@ -1328,7 +1338,9 @@ async def _create_internal_task_completion(data: ChatCompletionRequest, db: Asyn
     ctx = await _effective_context_length(model)
     messages = _trim_messages_to_budget(openai_msgs, max(512, ctx - max_tokens - 512))
 
-    response = await generator.generate(messages, max_tokens=max_tokens, temperature=float(data.temperature))
+    response, _used = await generate_with_fallback(
+        db, model, messages, max_tokens=max_tokens, temperature=float(data.temperature)
+    )
     return {
         "id": f"chatcmpl-{uuid.uuid4()}",
         "object": "chat.completion",
@@ -1342,7 +1354,6 @@ async def _create_internal_task_completion(data: ChatCompletionRequest, db: Asyn
 
 async def _create_internal_task_completion_stream(data: ChatCompletionRequest, db: AsyncSession) -> AsyncIterator[str]:
     model = await _load_model(data, db)
-    generator = ProviderManager.get_provider(model)
     max_tokens = _resolve_max_tokens(data.max_tokens, model.max_output_tokens)
     cmpl_id, created = f"chatcmpl-{uuid.uuid4()}", int(time.time())
 
@@ -1350,8 +1361,9 @@ async def _create_internal_task_completion_stream(data: ChatCompletionRequest, d
     ctx = await _effective_context_length(model)
     trimmed_msgs = _trim_messages_to_budget(openai_msgs, max(512, ctx - max_tokens - 512))
 
-    async for token in generator.generate_stream(trimmed_msgs, max_tokens=max_tokens,
-                                                 temperature=float(data.temperature)):
+    async for token, _used in generate_stream_with_fallback(
+        db, model, trimmed_msgs, max_tokens=max_tokens, temperature=float(data.temperature)
+    ):
         chunk = {
             "id": cmpl_id,
             "object": "chat.completion.chunk",
@@ -1418,7 +1430,6 @@ async def create_openai_chat_completion(data: ChatCompletionRequest, user: User,
 
     logger.info("🎯 create_openai_chat_completion | model=%s | stream=%s", data.model, data.stream)
     model = await _load_model(data, db)
-    generator = ProviderManager.get_provider(model)
 
     keep_files, allowed, _ = resolve_turn_file_scope(
         data.files, data.messages, conversation_id=data.conversation_id
@@ -1444,7 +1455,9 @@ async def create_openai_chat_completion(data: ChatCompletionRequest, user: User,
     ctx = await _effective_context_length(model)
     messages, max_tokens = _prepare_provider_messages(openai_msgs, model, data.max_tokens, rag_context, context_length=ctx)
 
-    response = await generator.generate(messages, max_tokens=max_tokens, temperature=float(data.temperature))
+    response, _used = await generate_with_fallback(
+        db, model, messages, max_tokens=max_tokens, temperature=float(data.temperature)
+    )
     remember_conversation_sources(data.conversation_id, data.messages)
     content = response.get("text", "")
     logger.info("📥 response content length: %d chars", len(content))
@@ -1468,7 +1481,6 @@ AsyncIterator[str]:
 
     logger.info("📡 create_openai_chat_completion_stream | model=%s", data.model)
     model = await _load_model(data, db)
-    generator = ProviderManager.get_provider(model)
 
     keep_files, allowed, _ = resolve_turn_file_scope(
         data.files, data.messages, conversation_id=data.conversation_id
@@ -1495,7 +1507,9 @@ AsyncIterator[str]:
     messages, max_tokens = _prepare_provider_messages(openai_msgs, model, data.max_tokens, rag_context, context_length=ctx)
 
     cmpl_id, created = f"chatcmpl-{uuid.uuid4()}", int(time.time())
-    async for token in generator.generate_stream(messages, max_tokens=max_tokens, temperature=float(data.temperature)):
+    async for token, _used in generate_stream_with_fallback(
+        db, model, messages, max_tokens=max_tokens, temperature=float(data.temperature)
+    ):
         chunk = {
             "id": cmpl_id,
             "object": "chat.completion.chunk",

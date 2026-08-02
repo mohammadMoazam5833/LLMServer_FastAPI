@@ -1,23 +1,19 @@
-# Apply after RBAC is granted and secrets are created from *.example files:
+# Apply after filling secrets from *.example:
 #   cp 10-postgres-secret.yaml.example 10-postgres-secret.yaml
 #   cp 31-gateway-secret.yaml.example 31-gateway-secret.yaml
 #   # edit passwords / DATABASE_URL / SECRET_KEY
-#   # set VLLM_BASE_URL in 30-gateway-configmap.yaml to YOUR cluster's vLLM
-#   kubectl apply -k k8s/team-b/
-#
-# Image (Docker Hub):
-#   REGISTRY=mohammadmoazami007007 TAG=YYYYMMDD ./scripts/k8s_push_gateway_image.sh
+#   # set VLLM_BASE_URL in 30-gateway-configmap.yaml to YOUR vLLM
+#   kubectl apply -k .
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: team-b
 resources:
+  - 10-postgres-secret.yaml
+  - 31-gateway-secret.yaml
   - 11-postgres-statefulset.yaml
   - 20-redis.yaml
   - 30-gateway-configmap.yaml
   - 32-gateway-deployment.yaml
-  # Uncomment after copying examples to real secret files (gitignored):
-  - 10-postgres-secret.yaml
-  - 31-gateway-secret.yaml
 images:
   - name: llm_proxy
     newName: mohammadmoazami007007/llm_proxy

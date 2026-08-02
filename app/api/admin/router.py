@@ -24,8 +24,18 @@ from app.schemas.schemas import (
     AdminAPIKeyOut,
     AdminAPIKeyCreatedResponse,
     UsageSummary,
+    AdminConnectionCreate,
+    AdminConnectionUpdate,
+    AdminConnectionOut,
+    AdminConnectionTestRequest,
+    AdminConnectionTestResult,
+    AdminLLMModelCreate,
+    AdminLLMModelUpdate,
+    AdminLLMModelOut,
+    ModelMetricsSummary,
 )
-from app.services import admin_user_service, admin_key_service, admin_usage_service
+from app.services import admin_user_service, admin_key_service, admin_usage_service, admin_llm_service
+from app.core.request_metrics import summarize_model_metrics
 
 router = APIRouter(tags=["Admin"])
 
@@ -148,3 +158,149 @@ async def admin_key_usage(
     db: AsyncSession = Depends(get_db),
 ):
     return await admin_usage_service.get_key_usage(db, api_key_id)
+
+
+@router.get("/metrics/models", response_model=ModelMetricsSummary)
+async def admin_model_metrics(
+    days: int = Query(default=7, ge=1, le=45),
+    _: User = Depends(require_superuser),
+):
+    """Per-model request / latency / error / token stats from Redis."""
+    return await summarize_model_metrics(days=days)
+
+
+# ── LLM connections (OpenAI-compatible providers) ──────────────────────────────
+
+@router.get("/connections", response_model=list[AdminConnectionOut])
+async def admin_list_connections(
+    _: User = Depends(require_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    return await admin_llm_service.list_connections(db)
+
+
+@router.post("/connections", response_model=AdminConnectionOut, status_code=201)
+async def admin_create_connection(
+    body: AdminConnectionCreate,
+    _: User = Depends(require_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    return await admin_llm_service.create_connection(
+        db,
+        id=body.id,
+        name=body.name,
+        base_url=body.base_url,
+        provider_type=body.provider_type,
+        api_key=body.api_key,
+        is_active=body.is_active,
+    )
+
+
+@router.patch("/connections/{connection_id}", response_model=AdminConnectionOut)
+async def admin_update_connection(
+    connection_id: str,
+    body: AdminConnectionUpdate,
+    _: User = Depends(require_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    return await admin_llm_service.update_connection(
+        db,
+        connection_id,
+        name=body.name,
+        base_url=body.base_url,
+        provider_type=body.provider_type,
+        api_key=body.api_key,
+        clear_api_key=body.clear_api_key,
+        is_active=body.is_active,
+    )
+
+
+@router.delete("/connections/{connection_id}", status_code=204)
+async def admin_delete_connection(
+    connection_id: str,
+    _: User = Depends(require_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    await admin_llm_service.delete_connection(db, connection_id)
+
+
+@router.post("/connections/test", response_model=AdminConnectionTestResult)
+async def admin_test_connection_draft(
+    body: AdminConnectionTestRequest,
+    _: User = Depends(require_superuser),
+):
+    """Probe an OpenAI-compatible /models endpoint before saving."""
+    return await admin_llm_service.test_openai_compatible_endpoint(
+        base_url=body.base_url,
+        api_key=body.api_key,
+        provider_type=body.provider_type,
+    )
+
+
+@router.post("/connections/{connection_id}/test", response_model=AdminConnectionTestResult)
+async def admin_test_saved_connection(
+    connection_id: str,
+    _: User = Depends(require_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    return await admin_llm_service.test_connection(db, connection_id)
+
+
+# ── LLM models (gateway registry) ──────────────────────────────────────────────
+
+@router.get("/models", response_model=list[AdminLLMModelOut])
+async def admin_list_models(
+    _: User = Depends(require_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    return await admin_llm_service.list_models(db)
+
+
+@router.post("/models", response_model=AdminLLMModelOut, status_code=201)
+async def admin_create_model(
+    body: AdminLLMModelCreate,
+    _: User = Depends(require_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    return await admin_llm_service.create_model(
+        db,
+        id=body.id,
+        model_path=body.model_path,
+        connection_id=body.connection_id,
+        base_url=body.base_url,
+        provider=body.provider,
+        context_length=body.context_length,
+        max_output_tokens=body.max_output_tokens,
+        is_active=body.is_active,
+        fallback_model_ids=body.fallback_model_ids,
+    )
+
+
+@router.patch("/models/{model_id}", response_model=AdminLLMModelOut)
+async def admin_update_model(
+    model_id: str,
+    body: AdminLLMModelUpdate,
+    _: User = Depends(require_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    return await admin_llm_service.update_model(
+        db,
+        model_id,
+        model_path=body.model_path,
+        connection_id=body.connection_id,
+        clear_connection=body.clear_connection,
+        base_url=body.base_url,
+        context_length=body.context_length,
+        max_output_tokens=body.max_output_tokens,
+        is_active=body.is_active,
+        fallback_model_ids=body.fallback_model_ids,
+    )
+
+
+@router.delete("/models/{model_id}", status_code=204)
+async def admin_delete_model(
+    model_id: str,
+    _: User = Depends(require_superuser),
+    db: AsyncSession = Depends(get_db),
+):
+    await admin_llm_service.delete_model(db, model_id)

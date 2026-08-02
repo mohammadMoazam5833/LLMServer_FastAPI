@@ -9,6 +9,38 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from app.database import Base
 
 
+class LLMConnection(Base):
+    """
+    Upstream LLM endpoint (LiteLLM-style provider/connection).
+
+    Phase 1: provider_type=openai_compatible (vLLM, TGI, etc.).
+    """
+    __tablename__ = "llm_llmconnection"
+
+    id: Mapped[str] = mapped_column(
+        String(64), primary_key=True, comment="Slug id, e.g. local-vllm"
+    )
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    provider_type: Mapped[str] = mapped_column(
+        String(64), default="openai_compatible", nullable=False
+    )
+    base_url: Mapped[str] = mapped_column(String(512), nullable=False)
+    api_key_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    api_key_hint: Mapped[str] = mapped_column(String(32), default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    models: Mapped[list["LLMModel"]] = relationship(
+        "LLMModel", back_populates="connection"
+    )
+
+    def __repr__(self) -> str:
+        return f"<LLMConnection {self.id}>"
+
+
 class LLMModel(Base):
     """Represents an available LLM model in the system."""
     __tablename__ = "llm_llmmodel"
@@ -18,18 +50,29 @@ class LLMModel(Base):
     )
     model_path: Mapped[str] = mapped_column(String(255), nullable=False)
     # Per-model OpenAI-compatible base, e.g. http://llm-vllm-a:8003/v1
-    # Empty/null → fall back to settings.VLLM_BASE_URL
+    # Empty/null → connection.base_url → settings.VLLM_BASE_URL
     base_url: Mapped[str | None] = mapped_column(String(512), nullable=True, default=None)
+    connection_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey("llm_llmconnection.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     provider: Mapped[str] = mapped_column(String(32), default="local")
     context_length: Mapped[int] = mapped_column(Integer, default=8192)
     max_output_tokens: Mapped[int] = mapped_column(Integer, default=2048)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Ordered public model ids to try if this deployment fails (LiteLLM-style fallbacks).
+    fallback_model_ids: Mapped[list] = mapped_column(JSON, default=list)
     metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc)
     )
 
+    connection: Mapped["LLMConnection | None"] = relationship(
+        "LLMConnection", back_populates="models"
+    )
     conversations: Mapped[list["Conversation"]] = relationship(
         "Conversation", back_populates="model"
     )

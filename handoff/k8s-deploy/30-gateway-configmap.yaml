@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: llm-gateway-config
+  namespace: team-b
+  labels:
+    app.kubernetes.io/name: llm-gateway
+    app.kubernetes.io/part-of: llm-fastapi
+data:
+  VLLM_BASE_URL: "http://CHANGE_ME_VLLM_HOST:8000/v1"
+  VLLM_DEFAULT_MODEL: "CHANGE_ME_SERVED_MODEL_NAME"
+  VLLM_REQUEST_TIMEOUT: "300.0"
+  OCR_SERVICE_URL: ""
+  REDIS_URL: "redis://redis:6379/0"
+  AUTO_CREATE_TABLES: "false"
+  DEBUG: "false"
+  ALLOWED_ORIGINS: '["*"]'

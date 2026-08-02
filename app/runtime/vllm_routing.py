@@ -1,4 +1,4 @@
-"""Resolve which vLLM OpenAI base URL a gateway model should use."""
+"""Resolve upstream OpenAI-compatible base URL for a gateway model (LiteLLM-like)."""
 from __future__ import annotations
 
 from sqlalchemy import or_, select
@@ -12,12 +12,42 @@ settings = get_settings()
 
 def resolve_vllm_base_url(model: LLMModel | None = None, base_url: str | None = None) -> str:
     """
-    Prefer explicit base_url / model.base_url; otherwise settings.VLLM_BASE_URL.
-    Always returns without trailing slash issues handled by callers via rstrip.
+    LiteLLM-aligned resolution:
+      1) explicit override argument
+      2) active connection.api_base (preferred when bound)
+      3) model.base_url (per-model api_base / legacy row)
+      4) settings.VLLM_BASE_URL only for unbound legacy models
+
+    If the model is bound to an *inactive* connection, return "" so callers fail
+    closed instead of silently using a stale URL.
     """
     chosen = (base_url or "").strip()
-    if not chosen and model is not None:
-        chosen = (getattr(model, "base_url", None) or "").strip()
+    if chosen:
+        return chosen.rstrip("/")
+
+    if model is None:
+        return (settings.VLLM_BASE_URL or "").strip().rstrip("/")
+
+    conn = getattr(model, "connection", None)
+    connection_id = getattr(model, "connection_id", None)
+
+    if connection_id:
+        if conn is None:
+            # relationship not loaded — do not invent a URL from denormalized cache alone
+            # when we know a binding exists; prefer denormalized only if present, else env.
+            # After LiteLLM delete semantics, deactivated models clear base_url.
+            chosen = (getattr(model, "base_url", None) or "").strip()
+            return chosen.rstrip("/")
+        if not getattr(conn, "is_active", False):
+            return ""
+        chosen = (getattr(conn, "base_url", None) or "").strip()
+        if chosen:
+            return chosen.rstrip("/")
+        # active connection without url should not happen
+        return ""
+
+    # Unbound (legacy) model: allow model.base_url then global default
+    chosen = (getattr(model, "base_url", None) or "").strip()
     if not chosen:
         chosen = (settings.VLLM_BASE_URL or "").strip()
     return chosen.rstrip("/")
@@ -30,10 +60,23 @@ async def load_active_model(
     """Look up by public id first, then by served model_path."""
     if not model_ref:
         return None
+    from sqlalchemy.orm import selectinload
+
     result = await db.execute(
-        select(LLMModel).where(
+        select(LLMModel)
+        .where(
             LLMModel.is_active == True,  # noqa: E712
             or_(LLMModel.id == model_ref, LLMModel.model_path == model_ref),
         )
+        .options(selectinload(LLMModel.connection))
     )
-    return result.scalars().first()
+    model = result.scalars().first()
+    if model is None:
+        return None
+
+    # Bound models require an active connection (LiteLLM credential must exist)
+    if model.connection_id:
+        conn = model.connection
+        if conn is None or not conn.is_active:
+            return None
+    return model

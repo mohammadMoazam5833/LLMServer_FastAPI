@@ -5,6 +5,7 @@ import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Users from "./pages/Users";
 import ApiKeys from "./pages/ApiKeys";
+import Models from "./pages/Models";
 import Usage from "./pages/Usage";
 import { getToken } from "./api/client";
 
@@ -30,6 +31,7 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="/users" element={<Users />} />
           <Route path="/api-keys" element={<ApiKeys />} />
+          <Route path="/models" element={<Models />} />
           <Route path="/usage" element={<Usage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

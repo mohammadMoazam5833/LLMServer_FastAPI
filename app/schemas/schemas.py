@@ -231,3 +231,106 @@ class UsageSummary(BaseModel):
     tokens_used: int
     monthly_token_quota: int
     percent_used: float
+
+
+class ModelMetricsRow(BaseModel):
+    model_id: str
+    requests: int = 0
+    errors: int = 0
+    fallbacks: int = 0
+    error_rate: float = 0.0
+    avg_latency_ms: float = 0.0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
+class ModelMetricsSummary(BaseModel):
+    days: int
+    from_date: str
+    to_date: str
+    models: list[ModelMetricsRow]
+    totals: ModelMetricsRow
+
+
+# ── Admin LLM connections / models ─────────────────────────────────────────────
+
+class AdminConnectionCreate(BaseModel):
+    id: str = Field(..., min_length=1, max_length=64)
+    name: str = Field(..., min_length=1, max_length=128)
+    base_url: str = Field(..., min_length=1, max_length=512)
+    provider_type: str = "vllm"
+    api_key: str | None = None
+    is_active: bool = True
+
+
+class AdminConnectionUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    base_url: str | None = Field(default=None, min_length=1, max_length=512)
+    provider_type: str | None = None
+    api_key: str | None = None
+    clear_api_key: bool = False
+    is_active: bool | None = None
+
+
+class AdminConnectionOut(BaseModel):
+    id: str
+    name: str
+    provider_type: str
+    base_url: str
+    api_key_hint: str = ""
+    has_api_key: bool = False
+    is_active: bool
+    created_at: datetime
+
+
+class AdminConnectionTestRequest(BaseModel):
+    base_url: str = Field(..., min_length=1, max_length=512)
+    api_key: str | None = None
+    provider_type: str = "vllm"
+
+
+class AdminConnectionTestResult(BaseModel):
+    ok: bool
+    base_url: str
+    status_code: int | None = None
+    model_ids: list[str] = []
+    error: str | None = None
+    connection_id: str | None = None
+
+
+class AdminLLMModelCreate(BaseModel):
+    id: str = Field(..., min_length=1, max_length=64)
+    model_path: str = Field(..., min_length=1, max_length=255)
+    connection_id: str = Field(..., min_length=1, max_length=64)
+    base_url: str | None = None
+    provider: str = "vllm"
+    context_length: int = Field(default=8192, ge=1)
+    max_output_tokens: int = Field(default=2048, ge=1)
+    is_active: bool = True
+    fallback_model_ids: list[str] = Field(default_factory=list)
+
+
+class AdminLLMModelUpdate(BaseModel):
+    model_path: str | None = Field(default=None, min_length=1, max_length=255)
+    connection_id: str | None = None
+    clear_connection: bool = False
+    base_url: str | None = None
+    context_length: int | None = Field(default=None, ge=1)
+    max_output_tokens: int | None = Field(default=None, ge=1)
+    is_active: bool | None = None
+    fallback_model_ids: list[str] | None = None
+
+
+class AdminLLMModelOut(BaseModel):
+    id: str
+    model_path: str
+    base_url: str | None = None
+    effective_base_url: str
+    connection_id: str | None = None
+    provider: str
+    context_length: int
+    max_output_tokens: int
+    is_active: bool
+    fallback_model_ids: list[str] = Field(default_factory=list)
+    created_at: datetime

@@ -1,6 +1,15 @@
 import { Link } from "react-router-dom";
 import { useEffect, useMemo, useState } from "react";
-import { api, AdminUser, UsageSummary, ApiError } from "../api/client";
+import {
+  Activity,
+  ArrowLeft,
+  KeyRound,
+  Network,
+  Server,
+  TriangleAlert,
+  UsersRound,
+} from "lucide-react";
+import { api, AdminConnection, AdminLLMModel, AdminUser, UsageSummary, ApiError } from "../api/client";
 import StatCard from "../components/ui/StatCard";
 import PageHeader from "../components/ui/PageHeader";
 import Alert from "../components/ui/Alert";
@@ -26,14 +35,16 @@ function UsageBar({ percent }: { percent: number }) {
 }
 
 const quickLinks = [
-  { to: "/users", label: "مدیریت کاربران", desc: "ساخت و فعال‌سازی", icon: "◎" },
-  { to: "/api-keys", label: "کلیدهای API", desc: "ساخت و محدودیت", icon: "▤" },
-  { to: "/usage", label: "گزارش مصرف", desc: "نمودار و جدول کامل", icon: "⚡" },
+  { to: "/models", label: "زیرساخت مدل", desc: "Provider و مدل جدید", icon: Network },
+  { to: "/api-keys", label: "دسترسی‌ها", desc: "کلید، سهمیه و محدودیت", icon: KeyRound },
+  { to: "/usage", label: "تحلیل مصرف", desc: "توکن و هشدار سهمیه", icon: Activity },
 ];
 
 export default function Dashboard() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [usage, setUsage] = useState<UsageSummary[]>([]);
+  const [connections, setConnections] = useState<AdminConnection[]>([]);
+  const [models, setModels] = useState<AdminLLMModel[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -42,9 +53,16 @@ export default function Dashboard() {
       setLoading(true);
       setError("");
       try {
-        const [u, us] = await Promise.all([api.listUsers(), api.listUsage()]);
+        const [u, us, conns, modelList] = await Promise.all([
+          api.listUsers(),
+          api.listUsage(),
+          api.listConnections(),
+          api.listAdminModels(),
+        ]);
         setUsers(u);
         setUsage(us);
+        setConnections(conns);
+        setModels(modelList);
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "خطا در بارگذاری");
       } finally {
@@ -55,12 +73,12 @@ export default function Dashboard() {
 
   const stats = useMemo(() => {
     const activeUsers = users.filter((u) => u.is_active).length;
-    const totalKeys = users.reduce((s, u) => s + u.key_count, 0);
     const totalTokens = usage.reduce((s, r) => s + r.tokens_used, 0);
     const nearLimit = usage.filter((r) => r.percent_used >= 80).length;
-    const activeKeys = usage.filter((r) => r.tokens_used > 0).length;
-    return { activeUsers, totalUsers: users.length, totalKeys, totalTokens, nearLimit, activeKeys };
-  }, [users, usage]);
+    const activeConnections = connections.filter((c) => c.is_active).length;
+    const activeModels = models.filter((m) => m.is_active).length;
+    return { activeUsers, totalUsers: users.length, totalTokens, nearLimit, activeConnections, activeModels };
+  }, [users, usage, connections, models]);
 
   const pieData = useMemo(() => {
     const byUser = new Map<string, number>();
@@ -88,32 +106,48 @@ export default function Dashboard() {
 
   return (
     <PageShell>
-      <PageHeader title="داشبورد" subtitle="خلاصه وضعیت سیستم — برای جزئیات مصرف به بخش گزارش بروید" />
+      <PageHeader
+        eyebrow="Control plane"
+        title="نمای کلی Gateway"
+        subtitle="سلامت زیرساخت مدل، دسترسی‌ها و مصرف را از یک نقطه پایش کنید."
+        action={
+          <Link
+            to="/models"
+            className="inline-flex h-10 items-center gap-2 rounded-xl bg-slate-950 px-4 text-xs font-bold text-white transition-colors hover:bg-slate-800"
+          >
+            افزودن مدل
+            <ArrowLeft size={15} />
+          </Link>
+        }
+      />
       <Alert message={error} />
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label="کاربران فعال" value={`${fmt(stats.activeUsers)} / ${fmt(stats.totalUsers)}`} hint="کاربران با دسترسی فعال" tone="zinc" icon="◎" />
-        <StatCard label="کلیدهای API" value={fmt(stats.totalKeys)} hint={`${fmt(stats.activeKeys)} کلید با مصرف این ماه`} tone="violet" icon="▤" />
-        <StatCard label="مصرف توکن" value={fmt(stats.totalTokens)} hint="جمع ماه جاری" tone="emerald" icon="⚡" />
-        <StatCard label="نزدیک سقف" value={fmt(stats.nearLimit)} hint="بالای ۸۰٪ سهمیه" tone="amber" icon="!" />
+        <StatCard label="مدل‌های فعال" value={fmt(stats.activeModels)} hint={`${fmt(stats.activeConnections)} ارائه‌دهنده فعال`} tone="violet" icon={<Server size={19} />} />
+        <StatCard label="کاربران فعال" value={`${fmt(stats.activeUsers)} / ${fmt(stats.totalUsers)}`} hint="کاربران دارای دسترسی" tone="zinc" icon={<UsersRound size={19} />} />
+        <StatCard label="مصرف توکن" value={fmt(stats.totalTokens)} hint="جمع ماه جاری" tone="emerald" icon={<Activity size={19} />} />
+        <StatCard label="نیاز به توجه" value={fmt(stats.nearLimit)} hint="کلید بالای ۸۰٪ سهمیه" tone="amber" icon={<TriangleAlert size={19} />} />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">
-        {quickLinks.map((q) => (
+        {quickLinks.map((q) => {
+          const Icon = q.icon;
+          return (
           <Link
             key={q.to}
             to={q.to}
-            className="group flex items-center gap-4 bg-white rounded-xl border border-zinc-200/80 p-5 hover:border-violet-300 hover:shadow-sm transition-all"
+            className="group flex items-center gap-4 rounded-2xl border border-slate-200/80 bg-white p-5 transition-all hover:-translate-y-0.5 hover:border-indigo-200 hover:shadow-lg hover:shadow-indigo-100/40"
           >
-            <span className="w-10 h-10 rounded-lg bg-violet-50 text-violet-600 flex items-center justify-center text-lg group-hover:bg-violet-100 transition-colors">
-              {q.icon}
+            <span className="flex size-11 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 transition-colors group-hover:bg-indigo-600 group-hover:text-white">
+              <Icon size={19} />
             </span>
             <div>
               <p className="font-bold text-zinc-900">{q.label}</p>
               <p className="text-sm text-zinc-500 mt-0.5">{q.desc}</p>
             </div>
           </Link>
-        ))}
+          );
+        })}
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -162,8 +196,8 @@ export default function Dashboard() {
           }
         />
         <CardBody className="overflow-x-auto p-0">
-          <table className="w-full text-sm min-w-[640px]">
-            <thead className="bg-zinc-50 border-b border-zinc-100 text-zinc-500 text-xs uppercase tracking-wide">
+          <table className="admin-table min-w-[640px]">
+            <thead>
               <tr>
                 {["کاربر", "کلید", "مصرف", "سهمیه", "پیشرفت"].map((h) => (
                   <th key={h} className="text-right px-6 py-3 font-semibold">{h}</th>

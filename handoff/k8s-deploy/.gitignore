@@ -1,0 +1,3 @@
+10-postgres-secret.yaml
+31-gateway-secret.yaml
+33-imagepullsecret.yaml

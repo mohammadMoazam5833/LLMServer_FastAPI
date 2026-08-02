@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
+import { KeyRound } from "lucide-react";
 import { api, AdminAPIKey, AdminUser, ApiError } from "../api/client";
 import PageHeader from "../components/ui/PageHeader";
 import Alert from "../components/ui/Alert";
@@ -134,10 +135,17 @@ export default function ApiKeys() {
   return (
     <PageShell>
       <PageHeader
-        title="کلیدهای API"
-        subtitle={`${keys.filter((k) => k.is_active).length} کلید فعال — برای OpenWebUI، Cline و OpenHands`}
+        eyebrow="Access control"
+        title="کلیدهای دسترسی"
+        subtitle="دسترسی برنامه‌ها را با سهمیه توکن و محدودیت نرخ مستقل کنترل کنید."
+        action={
+          <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
+            <KeyRound size={14} className="text-indigo-500" />
+            <strong className="text-slate-950">{keys.filter((k) => k.is_active).length}</strong> کلید فعال
+          </div>
+        }
       />
-      <Alert message={error} />
+      <Alert message={error} onClose={() => setError("")} />
 
       {editingKey && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/50 backdrop-blur-sm px-4">
@@ -184,7 +192,7 @@ export default function ApiKeys() {
         </div>
       )}
 
-      <FormCard title="ساخت کلید API جدید" subtitle="برای OpenWebUI، Cline، OpenHands و Agent Canvas">
+      <FormCard title="صدور کلید جدید" subtitle="برای OpenWebUI، Cline، OpenHands و کلاینت‌های سازگار با OpenAI">
         <form onSubmit={handleCreate}>
           <FormRow>
             <FormCol span={3}>
@@ -242,8 +250,8 @@ export default function ApiKeys() {
         />
         <CardBody className="p-0 pt-0">
       <div className="overflow-x-auto">
-        <table className="w-full text-sm min-w-[800px]">
-          <thead className="bg-zinc-50 text-zinc-600 border-b border-zinc-100">
+        <table className="admin-table min-w-[800px]">
+          <thead>
             <tr>
               <th className="text-right px-6 py-4 font-semibold">کاربر</th>
               <th className="text-right px-6 py-4 font-semibold">نام</th>

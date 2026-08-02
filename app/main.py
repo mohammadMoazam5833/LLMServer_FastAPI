@@ -107,6 +107,9 @@ async def lifespan(app: FastAPI):
     from app.core.rate_limit import aclose as close_rate_limit_redis
     await close_rate_limit_redis()
 
+    from app.core.request_metrics import aclose as close_metrics_redis
+    await close_metrics_redis()
+
     from app.core.redis_client import aclose as close_shared_redis
     await close_shared_redis()
 
@@ -157,6 +160,12 @@ def create_app() -> FastAPI:
             "redis": redis_ok,
             "attachment_cache_redis": attach_cache_ping(),
         }
+
+    @app.get("/metrics", include_in_schema=False)
+    async def prometheus_metrics():
+        from fastapi.responses import PlainTextResponse
+        from app.core.request_metrics import prometheus_text
+        return PlainTextResponse(await prometheus_text(days=1), media_type="text/plain; version=0.0.4")
 
     return app
 

@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
+import { Plus, Power, UserRound } from "lucide-react";
 import { api, AdminUser, ApiError } from "../api/client";
 import PageHeader from "../components/ui/PageHeader";
 import PageShell from "../components/ui/PageShell";
@@ -67,12 +68,18 @@ export default function Users() {
   return (
     <PageShell>
       <PageHeader
+        eyebrow="Identity & access"
         title="کاربران"
-        subtitle={`${activeCount} فعال از ${users.length} کاربر`}
+        subtitle="حساب‌های انسانی دارای دسترسی به Gateway را مدیریت کنید."
+        action={
+          <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
+            <strong className="ml-1 text-slate-950">{activeCount}</strong> از {users.length} فعال
+          </div>
+        }
       />
-      <Alert message={error} />
+      <Alert message={error} onClose={() => setError("")} />
 
-      <FormCard title="ساخت کاربر جدید" subtitle="اطلاعات کاربر را وارد کنید و ذخیره کنید">
+      <FormCard title="کاربر جدید" subtitle="پس از ساخت حساب می‌توانید کلید و سهمیه دسترسی تعریف کنید.">
         <form onSubmit={handleCreate}>
           <FormRow>
             <FormCol span={3}>
@@ -92,7 +99,8 @@ export default function Users() {
             </FormCol>
             <FormSubmitCol span={3}>
               <PrimaryButton type="submit" disabled={creating} className="w-full">
-                {creating ? "در حال ساخت…" : "+ ساخت کاربر"}
+                <Plus size={15} />
+                {creating ? "در حال ساخت…" : "ساخت کاربر"}
               </PrimaryButton>
             </FormSubmitCol>
           </FormRow>
@@ -100,14 +108,14 @@ export default function Users() {
       </FormCard>
 
       <Card>
-        <CardHeader title="لیست کاربران" subtitle="مدیریت وضعیت دسترسی" />
+        <CardHeader title="فهرست کاربران" subtitle="وضعیت حساب و تعداد کلیدهای هر کاربر" />
         <CardBody className="p-0">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-zinc-50 text-zinc-600 border-b border-zinc-100">
+            <table className="admin-table min-w-[720px]">
+              <thead>
                 <tr>
                   {["شناسه", "نام کاربری", "ایمیل", "وضعیت", "کلیدها", "عملیات"].map((h) => (
-                    <th key={h} className="text-right px-6 py-4 font-semibold">{h}</th>
+                    <th key={h}>{h}</th>
                   ))}
                 </tr>
               </thead>
@@ -117,19 +125,25 @@ export default function Users() {
                 ) : users.length === 0 ? (
                   <tr><td colSpan={6} className="px-6 py-12 text-center text-zinc-400">کاربری یافت نشد</td></tr>
                 ) : users.map((u) => (
-                  <tr key={u.id} className="border-b border-zinc-50 hover:bg-zinc-50/80">
-                    <td className="px-6 py-4 text-zinc-400 tabular-nums">{u.id}</td>
-                    <td className="px-6 py-4 font-bold text-zinc-800">{u.username}</td>
-                    <td className="px-6 py-4 text-zinc-600">{u.email || "—"}</td>
-                    <td className="px-6 py-4">
-                      <span className={`inline-flex px-2.5 py-1 rounded-md text-xs font-bold ${u.is_active ? "bg-emerald-50 text-emerald-700" : "bg-zinc-100 text-zinc-500"}`}>
+                  <tr key={u.id}>
+                    <td className="text-slate-400 tabular-nums">{u.id}</td>
+                    <td>
+                      <div className="flex items-center gap-2.5">
+                        <span className="grid size-8 place-items-center rounded-lg bg-indigo-50 text-indigo-600"><UserRound size={14} /></span>
+                        <span className="font-bold text-slate-800">{u.username}</span>
+                      </div>
+                    </td>
+                    <td className="text-slate-500">{u.email || "—"}</td>
+                    <td>
+                      <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-bold ${u.is_active ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+                        <span className={`size-1.5 rounded-full ${u.is_active ? "bg-emerald-500" : "bg-slate-400"}`} />
                         {u.is_active ? "فعال" : "غیرفعال"}
                       </span>
                     </td>
-                    <td className="px-6 py-4 tabular-nums">{u.key_count}</td>
-                    <td className="px-6 py-4">
-                      <button type="button" onClick={() => toggleActive(u)} className="text-violet-600 hover:text-violet-800 text-sm font-semibold">
-                        {u.is_active ? "غیرفعال" : "فعال"}
+                    <td className="font-bold tabular-nums">{u.key_count}</td>
+                    <td>
+                      <button type="button" onClick={() => toggleActive(u)} className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100">
+                        <Power size={13} />{u.is_active ? "غیرفعال" : "فعال"}
                       </button>
                     </td>
                   </tr>
