@@ -49,11 +49,31 @@ async def get_db() -> AsyncSession:
             raise
 
 
-async def ensure_api_key_columns() -> None:
-    """Lightweight schema patches for api_keys_apikey (no Alembic required)."""
+async def ensure_api_key_columns(*, bind=None) -> None:
+    """
+    Lightweight schema patches for api_keys_apikey (no Alembic required).
+
+    Safe when AUTO_CREATE_TABLES=false on an empty database: if the table is not
+    present yet, this is a no-op so the gateway can start and Alembic (or a
+    one-time create_all) can create the schema afterwards.
+    """
+    import logging
     from sqlalchemy import text
 
-    async with engine.begin() as conn:
+    logger = logging.getLogger(__name__)
+    eng = bind if bind is not None else engine
+
+    async with eng.begin() as conn:
+        exists = await conn.scalar(
+            text("SELECT to_regclass('public.api_keys_apikey') IS NOT NULL")
+        )
+        if not exists:
+            logger.info(
+                "🧱 Skipping api_keys_apikey column patch — table not present yet "
+                "(run alembic upgrade / enable AUTO_CREATE_TABLES for first boot)"
+            )
+            return
+
         await conn.execute(
             text(
                 "ALTER TABLE api_keys_apikey "

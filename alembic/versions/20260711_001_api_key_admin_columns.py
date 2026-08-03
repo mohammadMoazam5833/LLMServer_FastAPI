@@ -17,16 +17,33 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    # No-op if table is missing (empty DB / Alembic before create_all bootstrap).
+    # Columns are also ensured by app.database.ensure_api_key_columns when the
+    # table already exists.
     op.execute(
-        "ALTER TABLE api_keys_apikey "
-        "ADD COLUMN IF NOT EXISTS key_hint VARCHAR(32) DEFAULT ''"
-    )
-    op.execute(
-        "ALTER TABLE api_keys_apikey "
-        "ADD COLUMN IF NOT EXISTS key_encrypted VARCHAR(512) DEFAULT ''"
+        """
+        DO $$
+        BEGIN
+            IF to_regclass('public.api_keys_apikey') IS NOT NULL THEN
+                ALTER TABLE api_keys_apikey
+                    ADD COLUMN IF NOT EXISTS key_hint VARCHAR(32) DEFAULT '';
+                ALTER TABLE api_keys_apikey
+                    ADD COLUMN IF NOT EXISTS key_encrypted VARCHAR(512) DEFAULT '';
+            END IF;
+        END $$;
+        """
     )
 
 
 def downgrade() -> None:
-    op.execute("ALTER TABLE api_keys_apikey DROP COLUMN IF EXISTS key_encrypted")
-    op.execute("ALTER TABLE api_keys_apikey DROP COLUMN IF EXISTS key_hint")
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF to_regclass('public.api_keys_apikey') IS NOT NULL THEN
+                ALTER TABLE api_keys_apikey DROP COLUMN IF EXISTS key_encrypted;
+                ALTER TABLE api_keys_apikey DROP COLUMN IF EXISTS key_hint;
+            END IF;
+        END $$;
+        """
+    )

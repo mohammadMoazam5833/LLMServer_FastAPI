@@ -7,17 +7,22 @@ logger = logging.getLogger(__name__)
 
 class GeneratorFactory:
     """
-    Caches one VLLMHttpGenerator per model id + base_url.
+    Caches one VLLMHttpGenerator per model id + base_url + upstream key fingerprint.
     The generator holds a shared httpx.AsyncClient for connection pooling.
     """
     _cache: dict[str, VLLMHttpGenerator] = {}
 
     @classmethod
     def _cache_key(cls, config) -> str:
-        from app.runtime.vllm_routing import resolve_vllm_base_url
+        from app.runtime.vllm_routing import (
+            resolve_upstream_api_key,
+            resolve_vllm_base_url,
+            upstream_api_key_fingerprint,
+        )
         base = resolve_vllm_base_url(config)
         path = getattr(config, "model_path", "") or ""
-        return f"{getattr(config, 'id', 'unknown')}@{base}@{path}"
+        key_fp = upstream_api_key_fingerprint(resolve_upstream_api_key(config))
+        return f"{getattr(config, 'id', 'unknown')}@{base}@{path}@{key_fp}"
 
     @classmethod
     def get(cls, config) -> VLLMHttpGenerator:

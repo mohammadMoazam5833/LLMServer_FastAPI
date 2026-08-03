@@ -29,7 +29,12 @@ from app.database import get_db
 from app.models.llm import LLMModel
 from app.models.user import User
 from app.config import get_settings
-from app.runtime.vllm_routing import load_active_model, resolve_vllm_base_url
+from app.runtime.vllm_routing import (
+    load_active_model,
+    resolve_upstream_api_key,
+    resolve_vllm_base_url,
+    upstream_auth_headers,
+)
 from app.runtime.fallback import is_retryable_upstream_error, load_fallback_chain
 from app.core.request_metrics import record_model_request
 from app.services.token_utils import estimate_message_tokens, estimate_text_tokens
@@ -39,14 +44,11 @@ settings = get_settings()
 router = APIRouter(tags=["Code Bot Direct"])
 
 
-async def _forward_headers(request: Request) -> dict[str, str]:
-    headers = {
-        "Content-Type": "application/json",
-    }
-    for key in ("Authorization", "X-API-Key", "Cookie"):
-        val = request.headers.get(key)
-        if val:
-            headers[key] = val
+def _upstream_headers(auth: dict[str, str] | None = None) -> dict[str, str]:
+    """Outbound headers for vLLM — never forward the client's gateway key."""
+    headers = {"Content-Type": "application/json"}
+    if auth:
+        headers.update(auth)
     return headers
 
 
@@ -74,8 +76,8 @@ async def _prepare_upstream(
 async def _prepare_upstream_chain(
     db: AsyncSession,
     body: dict,
-) -> list[tuple[str, dict, str]]:
-    """Ordered (base_url, body, gateway_model_id) attempts including fallbacks."""
+) -> list[tuple[str, dict, str, dict[str, str]]]:
+    """Ordered (base_url, body, gateway_model_id, auth_headers) including fallbacks."""
     client_model = body.get("model")
     if isinstance(client_model, str):
         client_model = client_model.strip() or None
@@ -85,10 +87,13 @@ async def _prepare_upstream_chain(
     model = await load_active_model(db, client_model) if client_model else None
     if model is None:
         base = resolve_vllm_base_url(None)
-        return [(base, dict(body), client_model or "")] if base else []
+        if not base:
+            return []
+        auth = upstream_auth_headers(resolve_upstream_api_key(None))
+        return [(base, dict(body), client_model or "", auth)]
 
     chain_models = await load_fallback_chain(db, model)
-    out: list[tuple[str, dict, str]] = []
+    out: list[tuple[str, dict, str, dict[str, str]]] = []
     for m in chain_models:
         base = resolve_vllm_base_url(m)
         if not base:
@@ -110,7 +115,8 @@ async def _prepare_upstream_chain(
                 m.model_path,
                 base,
             )
-        out.append((base, rewritten, m.id))
+        auth = upstream_auth_headers(resolve_upstream_api_key(m))
+        out.append((base, rewritten, m.id, auth))
     return out
 
 
@@ -206,7 +212,9 @@ async def list_models(
         async with httpx.AsyncClient() as client:
             resp = await client.get(
                 f"{base}/models",
-                headers=await _forward_headers(request),
+                headers=_upstream_headers(
+                    upstream_auth_headers(resolve_upstream_api_key(None))
+                ),
             )
             resp.raise_for_status()
             return JSONResponse(content=resp.json())
@@ -251,14 +259,18 @@ async def chat_completions(
         )
 
     is_stream = bool(body.get("stream", False))
-    headers = await _forward_headers(request)
     api_key_id = getattr(request.state, "api_key_id", None)
     client_model = body.get("model") if isinstance(body.get("model"), str) else chain[0][2]
 
     if is_stream:
-        base_url, upstream_body, _mid = chain[0]
+        base_url, upstream_body, _mid, auth = chain[0]
         return StreamingResponse(
-            _stream_from_vllm(upstream_body, headers, base_url, api_key_id=api_key_id),
+            _stream_from_vllm(
+                upstream_body,
+                _upstream_headers(auth),
+                base_url,
+                api_key_id=api_key_id,
+            ),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
@@ -270,7 +282,7 @@ async def chat_completions(
     last_error: Exception | None = None
     data = None
     used_fallback = False
-    for i, (base_url, upstream_body, mid) in enumerate(chain):
+    for i, (base_url, upstream_body, mid, auth) in enumerate(chain):
         try:
             async with httpx.AsyncClient(
                 timeout=httpx.Timeout(settings.VLLM_REQUEST_TIMEOUT, connect=10.0),
@@ -278,7 +290,7 @@ async def chat_completions(
                 resp = await client.post(
                     f"{base_url.rstrip('/')}/chat/completions",
                     json=upstream_body,
-                    headers=headers,
+                    headers=_upstream_headers(auth),
                 )
                 resp.raise_for_status()
                 data = resp.json()

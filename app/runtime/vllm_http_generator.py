@@ -8,7 +8,11 @@ import httpx
 
 from app.config import get_settings
 from app.services.token_utils import estimate_message_tokens
-from app.runtime.vllm_routing import resolve_vllm_base_url
+from app.runtime.vllm_routing import (
+    resolve_upstream_api_key,
+    resolve_vllm_base_url,
+    upstream_auth_headers,
+)
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -18,29 +22,32 @@ class VLLMHttpGenerator:
     def __init__(self, config: Any):
         self.base_url = resolve_vllm_base_url(config)
         self.model = config.model_path
+        self._auth_headers = upstream_auth_headers(resolve_upstream_api_key(config))
         logger.info(
-            "🌐 VLLMHttpGenerator ready | model_id=%s | served=%s | base_url=%s",
+            "🌐 VLLMHttpGenerator ready | model_id=%s | served=%s | base_url=%s | auth=%s",
             getattr(config, "id", "?"),
             self.model,
             self.base_url,
+            "yes" if self._auth_headers else "no",
         )
-        
+
         # ۱. حل مشکل تایم‌اوت: اگر مقدار تنظیمات خیلی کم یا نامعتبر بود، حداقل ۱۸۰ ثانیه اعمال می‌شود
         config_timeout = getattr(settings, "VLLM_REQUEST_TIMEOUT", 180.0)
         request_timeout = config_timeout if (config_timeout and config_timeout >= 120.0) else 180.0
-        
+
         # مقدار اختصاصی برای زمان خواندن (Read) به دلیل سنگین بودن پردازش اولیه مدل ۳۰ میلیاردی
         self._timeout = httpx.Timeout(
             timeout=request_timeout,
             connect=10.0,
             read=request_timeout,
-            write=10.0
+            write=10.0,
         )
-        
+
         # کلاینت اشتراکی به همراه مدیریت بهینه کانکشن‌ها (Pool Limits)
         self._client = httpx.AsyncClient(
             timeout=self._timeout,
-            limits=httpx.Limits(max_connections=50, max_keepalive_connections=10)
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=10),
+            headers=self._auth_headers or None,
         )
 
     # ── Non-streaming ──────────────────────────────────────────────────────────
@@ -54,19 +61,19 @@ class VLLMHttpGenerator:
         msg_count = len(messages)
         total_input_chars = sum(len(m.get("content", "") or "") for m in messages)
         estimated_input_tokens = sum(estimate_message_tokens(m) for m in messages)
-        
+
         payload = {
             "model": self.model,
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
             "stream": False,
-            **kwargs
+            **kwargs,
         }
-        
+
         logger.info(
             "📤 vLLM non-stream request | model=%s | max_tokens=%d | temp=%.2f | msgs=%d | input_chars=%d | input_tokens~=%d",
-            self.model, max_tokens, temperature, msg_count, total_input_chars, estimated_input_tokens
+            self.model, max_tokens, temperature, msg_count, total_input_chars, estimated_input_tokens,
         )
 
         try:
@@ -75,14 +82,14 @@ class VLLMHttpGenerator:
             )
             response.raise_for_status()
             data = response.json()
-            
+
             content = data["choices"][0]["message"]["content"]
             finish_reason = data["choices"][0].get("finish_reason", "unknown")
             usage = data.get("usage", {})
-            
+
             logger.info(
                 "✅ vLLM non-stream response | content_len=%d chars | finish_reason=%s | usage=%s",
-                len(content), finish_reason, usage
+                len(content), finish_reason, usage,
             )
             return {
                 "text": content,
@@ -109,25 +116,25 @@ class VLLMHttpGenerator:
         msg_count = len(messages)
         total_input_chars = sum(len(m.get("content", "") or "") for m in messages)
         estimated_input_tokens = sum(estimate_message_tokens(m) for m in messages)
-        
+
         payload = {
             "model": self.model,
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
             "stream": True,
-            **kwargs
+            **kwargs,
         }
-        
+
         logger.info(
             "🔗 vLLM stream START | model=%s | max_tokens=%d | temp=%.2f | msgs=%d | input_chars=%d | input_tokens~=%d",
-            self.model, max_tokens, temperature, msg_count, total_input_chars, estimated_input_tokens
+            self.model, max_tokens, temperature, msg_count, total_input_chars, estimated_input_tokens,
         )
-        
+
         chunk_count = 0
         total_chars = 0
         last_token = ""
-        last_data: Dict[str, Any] = {}  # حل باگ اسکوپ متغیر
+        last_data: Dict[str, Any] = {}
 
         try:
             async with self._client.stream(
@@ -141,7 +148,7 @@ class VLLMHttpGenerator:
                 async for line in response.aiter_lines():
                     if not line or not line.startswith("data: "):
                         continue
-                        
+
                     raw = line[6:].strip()
                     if raw == "[DONE]":
                         finish_reason = last_data.get("choices", [{}])[0].get("finish_reason", "unknown")
@@ -156,7 +163,7 @@ class VLLMHttpGenerator:
                                 "افزایش دهید یا CHAT_MIN_OUTPUT_TOKENS را در .env بالاتر ببرید."
                             )
                         break
-                        
+
                     try:
                         last_data = json.loads(raw)
                         delta = last_data.get("choices", [{}])[0].get("delta", {})
@@ -173,7 +180,6 @@ class VLLMHttpGenerator:
             logger.error("🚨 vLLM connection closed prematurely | chunks=%d | total_chars=%d | err=%s", chunk_count, total_chars, e)
             raise
         except httpx.TimeoutException as e:
-            # ۲. رفع باگ اصلی: خطا را دوباره بالا می‌فرستیم تا کلاینت با استریم خالی فریب نخورد
             logger.error("🚨 vLLM timeout during streaming | chunks=%d | total_chars=%d | err=%s", chunk_count, total_chars, e)
             raise
         except Exception as e:

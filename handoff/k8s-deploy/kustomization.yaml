@@ -14,10 +14,21 @@ resources:
   - 20-redis.yaml
   - 30-gateway-configmap.yaml
   - 32-gateway-deployment.yaml
+  - 40-ocr.yaml
 images:
   - name: llm_proxy
     newName: mohammadmoazami007007/llm_proxy
     newTag: latest
+  - name: llmocr
+    newName: mohammadmoazami007007/llmocr
+    newTag: latest
+  # Air-gap / private registry: change newName (and optionally pin digest instead of newTag).
+  - name: postgres
+    newName: postgres
+    newTag: 16-alpine
+  - name: redis
+    newName: redis
+    newTag: 7-alpine
 labels:
   - pairs:
       app.kubernetes.io/part-of: llm-fastapi

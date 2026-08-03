@@ -1,6 +1,7 @@
 """Resolve upstream OpenAI-compatible base URL for a gateway model (LiteLLM-like)."""
 from __future__ import annotations
 
+import hashlib
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,6 +52,48 @@ def resolve_vllm_base_url(model: LLMModel | None = None, base_url: str | None = 
     if not chosen:
         chosen = (settings.VLLM_BASE_URL or "").strip()
     return chosen.rstrip("/")
+
+
+def resolve_upstream_api_key(model: LLMModel | None = None) -> str | None:
+    """
+    Upstream credential for OpenAI-compatible backends:
+      1) active connection.api_key (decrypted)
+      2) settings.VLLM_API_KEY (cluster-wide default)
+    """
+    if model is not None:
+        conn = getattr(model, "connection", None)
+        if conn is not None and getattr(conn, "is_active", False):
+            enc = getattr(conn, "api_key_encrypted", None)
+            if enc:
+                from app.core.security import decrypt_api_key
+                key = decrypt_api_key(enc)
+                if key and key.strip():
+                    return key.strip()
+
+    env_key = (settings.VLLM_API_KEY or "").strip()
+    return env_key or None
+
+
+def upstream_auth_headers(api_key: str | None) -> dict[str, str]:
+    """
+    Headers accepted by vLLM / OpenAI-compatible servers that require auth.
+    Sends both Bearer and X-API-Key (vLLM accepts either).
+    """
+    key = (api_key or "").strip()
+    if not key:
+        return {}
+    return {
+        "Authorization": f"Bearer {key}",
+        "X-API-Key": key,
+    }
+
+
+def upstream_api_key_fingerprint(api_key: str | None) -> str:
+    """Stable non-secret token for generator cache keys."""
+    key = (api_key or "").strip()
+    if not key:
+        return "nokey"
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
 
 
 async def load_active_model(

@@ -38,6 +38,9 @@ class Settings(BaseSettings):
 
     # ── LLM Runtime ───────────────────────────────────────────────────────────
     VLLM_BASE_URL: str = "http://127.0.0.1:8003/v1"
+    # Upstream auth for OpenAI-compatible backends that require --api-key / VLLM_API_KEY.
+    # Per-connection keys in admin override this when a model is bound to a Connection.
+    VLLM_API_KEY: str = ""
     VLLM_DEFAULT_MODEL: str = "/home/moazemi-gc/extra_space/models/Qwen3-Coder-30B-A3B-Instruct"
     VLLM_REQUEST_TIMEOUT: float = 300.0
 

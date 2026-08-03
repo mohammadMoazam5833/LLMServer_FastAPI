@@ -242,9 +242,8 @@ async def test_openai_compatible_endpoint(
 ) -> dict[str, Any]:
     provider_type = _normalize_provider_type(provider_type)
     base = _normalize_base_url(base_url, provider_type)
-    headers: dict[str, str] = {}
-    if api_key and api_key.strip():
-        headers["Authorization"] = f"Bearer {api_key.strip()}"
+    from app.runtime.vllm_routing import upstream_auth_headers
+    headers = upstream_auth_headers(api_key)
 
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:

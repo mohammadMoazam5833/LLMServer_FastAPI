@@ -726,13 +726,20 @@ async def _effective_context_length(model: LLMModel) -> int:
     کل کانتکست ۱۲۸k را اشغال نکند. روت code_bot/Cline از این تابع عبور نمی‌کند و کامل باقی می‌ماند.
     """
     db_ctx = model.context_length or 8192
-    from app.runtime.vllm_routing import resolve_vllm_base_url
+    from app.runtime.vllm_routing import (
+        resolve_upstream_api_key,
+        resolve_vllm_base_url,
+        upstream_auth_headers,
+    )
     base = resolve_vllm_base_url(model)
     if base not in _vllm_ctx_cache:
         detected = 0
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{base.rstrip('/')}/models")
+                resp = await client.get(
+                    f"{base.rstrip('/')}/models",
+                    headers=upstream_auth_headers(resolve_upstream_api_key(model)) or None,
+                )
                 resp.raise_for_status()
                 # Prefer matching served name; else first max_model_len
                 data = resp.json().get("data", [])
